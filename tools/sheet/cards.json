@@ -1,0 +1,540 @@
+[
+ {
+  "id": "straight",
+  "name": "Straight Three",
+  "mode": "count",
+  "priceLamports": 2000000,
+  "modeArgs": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "jackpotHitWeight": 858993,
+  "jackpotNearWeight": 600436428,
+  "blocks": [
+   {
+    "role": "plate",
+    "count": 3,
+    "cols": 3,
+    "flags": 0,
+    "a": 0,
+    "b": 0
+   },
+   {
+    "role": "plate",
+    "count": 3,
+    "cols": 3,
+    "flags": 0,
+    "a": 0,
+    "b": 0
+   },
+   {
+    "role": "plate",
+    "count": 3,
+    "cols": 3,
+    "flags": 0,
+    "a": 0,
+    "b": 0
+   },
+   {
+    "role": "jackpot",
+    "count": 4,
+    "cols": 4,
+    "flags": 0,
+    "a": 7,
+    "b": 9
+   }
+  ],
+  "pays": [
+   {
+    "scope": 7,
+    "weight": 573520791,
+    "min": 3,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 56,
+    "weight": 573520791,
+    "min": 3,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 448,
+    "weight": 573520791,
+    "min": 3,
+    "flags": 0,
+    "mult": 1
+   }
+  ],
+  "tiers": [],
+  "pool": [
+   {
+    "token": "POPCAT",
+    "weight": 2585475639,
+    "amount": 4000000000
+   },
+   {
+    "token": "SOL",
+    "weight": 1103646153,
+    "amount": 4000000
+   },
+   {
+    "token": "SKR",
+    "weight": 439785708,
+    "amount": 80000000
+   },
+   {
+    "token": "WIF",
+    "weight": 119721651,
+    "amount": 6000000
+   },
+   {
+    "token": "RAY",
+    "weight": 33201278,
+    "amount": 3000000
+   },
+   {
+    "token": "BONK",
+    "weight": 8745459,
+    "amount": 150000000000
+   },
+   {
+    "token": "JTO",
+    "weight": 2885728,
+    "amount": 15000000000
+   },
+   {
+    "token": "PENGU",
+    "weight": 1007291,
+    "amount": 1500000000
+   },
+   {
+    "token": "JUP",
+    "weight": 454245,
+    "amount": 100000000
+   },
+   {
+    "token": "PUMP",
+    "weight": 44144,
+    "amount": 10000000000
+   }
+  ],
+  "roll": "independent"
+ },
+ {
+  "id": "triple",
+  "name": "Match Three",
+  "mode": "count",
+  "priceLamports": 5000000,
+  "modeArgs": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "jackpotHitWeight": 2147484,
+  "jackpotNearWeight": 685047284,
+  "blocks": [
+   {
+    "role": "plate",
+    "count": 9,
+    "cols": 3,
+    "flags": 2,
+    "a": 0,
+    "b": 0
+   },
+   {
+    "role": "jackpot",
+    "count": 4,
+    "cols": 4,
+    "flags": 0,
+    "a": 7,
+    "b": 9
+   }
+  ],
+  "pays": [
+   {
+    "scope": 511,
+    "weight": 1164259811,
+    "min": 3,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 511,
+    "weight": 355486037,
+    "min": 4,
+    "flags": 0,
+    "mult": 2
+   },
+   {
+    "scope": 511,
+    "weight": 74084785,
+    "min": 5,
+    "flags": 0,
+    "mult": 5
+   },
+   {
+    "scope": 511,
+    "weight": 16556905,
+    "min": 6,
+    "flags": 0,
+    "mult": 12
+   },
+   {
+    "scope": 511,
+    "weight": 3450529,
+    "min": 7,
+    "flags": 0,
+    "mult": 30
+   },
+   {
+    "scope": 511,
+    "weight": 439494,
+    "min": 8,
+    "flags": 0,
+    "mult": 100
+   }
+  ],
+  "tiers": [],
+  "pool": [
+   {
+    "token": "POPCAT",
+    "weight": 456893626,
+    "amount": 10000000000
+   },
+   {
+    "token": "SKR",
+    "weight": 519443682,
+    "amount": 75000000
+   },
+   {
+    "token": "SOL",
+    "weight": 522391081,
+    "amount": 6000000
+   },
+   {
+    "token": "WIF",
+    "weight": 482376602,
+    "amount": 3000000
+   },
+   {
+    "token": "RAY",
+    "weight": 513073838,
+    "amount": 750000
+   },
+   {
+    "token": "BONK",
+    "weight": 461902809,
+    "amount": 20000000000
+   },
+   {
+    "token": "PYTH",
+    "weight": 321263642,
+    "amount": 15000000
+   },
+   {
+    "token": "PENGU",
+    "weight": 363691228,
+    "amount": 75000000
+   },
+   {
+    "token": "JUP",
+    "weight": 437905673,
+    "amount": 3000000
+   },
+   {
+    "token": "PUMP",
+    "weight": 216025115,
+    "amount": 200000000
+   }
+  ],
+  "roll": "exclusive"
+ },
+ {
+  "id": "five",
+  "name": "Beat the House",
+  "mode": "compare",
+  "priceLamports": 10000000,
+  "modeArgs": [
+   0,
+   1,
+   2,
+   1
+  ],
+  "jackpotHitWeight": 4294967,
+  "jackpotNearWeight": 936302871,
+  "blocks": [
+   {
+    "role": "number",
+    "count": 5,
+    "cols": 5,
+    "flags": 1,
+    "a": 8,
+    "b": 22
+   },
+   {
+    "role": "number",
+    "count": 5,
+    "cols": 5,
+    "flags": 0,
+    "a": 1,
+    "b": 30
+   },
+   {
+    "role": "plate",
+    "count": 5,
+    "cols": 5,
+    "flags": 0,
+    "a": 0,
+    "b": 0
+   },
+   {
+    "role": "jackpot",
+    "count": 4,
+    "cols": 4,
+    "flags": 0,
+    "a": 7,
+    "b": 9
+   }
+  ],
+  "pays": [
+   {
+    "scope": 1057,
+    "weight": 344271563,
+    "min": 1,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 2114,
+    "weight": 344271562,
+    "min": 1,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 4228,
+    "weight": 344271562,
+    "min": 1,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 8456,
+    "weight": 344271562,
+    "min": 1,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 16912,
+    "weight": 344271562,
+    "min": 1,
+    "flags": 0,
+    "mult": 1
+   }
+  ],
+  "tiers": [],
+  "pool": [
+   {
+    "token": "POPCAT",
+    "weight": 2603118019,
+    "amount": 20000000000
+   },
+   {
+    "token": "SOL",
+    "weight": 1058838762,
+    "amount": 20000000
+   },
+   {
+    "token": "SKR",
+    "weight": 400492427,
+    "amount": 400000000
+   },
+   {
+    "token": "WIF",
+    "weight": 147306892,
+    "amount": 25000000
+   },
+   {
+    "token": "RAY",
+    "weight": 60088638,
+    "amount": 10000000
+   },
+   {
+    "token": "BONK",
+    "weight": 14675203,
+    "amount": 500000000000
+   },
+   {
+    "token": "JTO",
+    "weight": 7193207,
+    "amount": 40000000000
+   },
+   {
+    "token": "PENGU",
+    "weight": 2365462,
+    "amount": 4000000000
+   },
+   {
+    "token": "JUP",
+    "weight": 800437,
+    "amount": 300000000
+   },
+   {
+    "token": "PUMP",
+    "weight": 88249,
+    "amount": 25000000000
+   }
+  ],
+  "roll": "independent"
+ },
+ {
+  "id": "vault",
+  "name": "The Vault",
+  "mode": "count",
+  "priceLamports": 50000000,
+  "modeArgs": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "jackpotHitWeight": 21474836,
+  "jackpotNearWeight": 1352914698,
+  "blocks": [
+   {
+    "role": "plate",
+    "count": 9,
+    "cols": 3,
+    "flags": 0,
+    "a": 0,
+    "b": 0
+   },
+   {
+    "role": "jackpot",
+    "count": 4,
+    "cols": 4,
+    "flags": 0,
+    "a": 7,
+    "b": 9
+   }
+  ],
+  "pays": [
+   {
+    "scope": 56,
+    "weight": 625433490,
+    "min": 3,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 146,
+    "weight": 625433490,
+    "min": 3,
+    "flags": 0,
+    "mult": 1
+   },
+   {
+    "scope": 7,
+    "weight": 74726489,
+    "min": 3,
+    "flags": 0,
+    "mult": 2
+   },
+   {
+    "scope": 448,
+    "weight": 74726489,
+    "min": 3,
+    "flags": 0,
+    "mult": 2
+   },
+   {
+    "scope": 73,
+    "weight": 74726489,
+    "min": 3,
+    "flags": 0,
+    "mult": 2
+   },
+   {
+    "scope": 292,
+    "weight": 74726489,
+    "min": 3,
+    "flags": 0,
+    "mult": 2
+   },
+   {
+    "scope": 273,
+    "weight": 22526455,
+    "min": 3,
+    "flags": 0,
+    "mult": 5
+   },
+   {
+    "scope": 84,
+    "weight": 22526455,
+    "min": 3,
+    "flags": 0,
+    "mult": 5
+   }
+  ],
+  "tiers": [],
+  "pool": [
+   {
+    "token": "POPCAT",
+    "weight": 1319663285,
+    "amount": 100000000000
+   },
+   {
+    "token": "SKR",
+    "weight": 1337902573,
+    "amount": 800000000
+   },
+   {
+    "token": "SOL",
+    "weight": 771132443,
+    "amount": 80000000
+   },
+   {
+    "token": "WIF",
+    "weight": 395534123,
+    "amount": 50000000
+   },
+   {
+    "token": "RAY",
+    "weight": 272604911,
+    "amount": 15000000
+   },
+   {
+    "token": "BONK",
+    "weight": 85559594,
+    "amount": 600000000000
+   },
+   {
+    "token": "JTO",
+    "weight": 56654879,
+    "amount": 40000000000
+   },
+   {
+    "token": "PYTH",
+    "weight": 25349065,
+    "amount": 600000000
+   },
+   {
+    "token": "JUP",
+    "weight": 22137094,
+    "amount": 150000000
+   },
+   {
+    "token": "PUMP",
+    "weight": 8429329,
+    "amount": 10000000000
+   }
+  ],
+  "roll": "exclusive"
+ }
+]

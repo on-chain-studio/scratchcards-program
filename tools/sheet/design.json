@@ -1,0 +1,32 @@
+{
+  "straight": {
+    "min": 1.05,
+    "max": 230,
+    "bend": 1.9448400417775247,
+    "top": 50000,
+    "winOneIn": 2.5,
+    "turnover": 1000
+  },
+  "triple": {
+    "min": 1.05,
+    "max": 147,
+    "bend": 1.832429964821813,
+    "top": 0,
+    "winOneIn": 2.5
+  },
+  "five": {
+    "min": 1.05,
+    "max": 118,
+    "bend": 2.0550642848832013,
+    "top": 300000,
+    "winOneIn": 2.5
+  },
+  "vault": {
+    "min": 1.05,
+    "max": 120,
+    "bend": 2.503902688730932,
+    "top": 0,
+    "winOneIn": 2.5,
+    "turnover": 5000
+  }
+}
