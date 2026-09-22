@@ -1,23 +1,35 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::{ix, ProcessInstruction};
 use crate::state::card::{Card, CardStatus};
 use crate::state::Config;
 use crate::utils::{engine, pda, receipt, vault};
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestCollect;
 
 
-impl ProcessInstruction for RequestCollect {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [user, config_account, house, card_account, receipt_account, ephemeral_vault,
-             magic_program, vault_program, jackpot, jackpot_ledger, wallet, house_ledger,
-             magic_context, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl RequestCollect {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        user: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        card_account: &AccountInfo<'a>,
+        receipt_account: &AccountInfo<'a>,
+        ephemeral_vault: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        vault_program: &AccountInfo<'a>,
+        jackpot: &AccountInfo<'a>,
+        jackpot_ledger: &AccountInfo<'a>,
+        wallet: &AccountInfo<'a>,
+        house_ledger: &AccountInfo<'a>,
+        magic_context: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         // A win may open a new token slot on the player's ledger; the vault needs the owner's consent,
         // which is the session key signing here.
@@ -94,7 +106,7 @@ impl ProcessInstruction for RequestCollect {
             program_id,
             &[b"house", &[house_bump]],
             &[*user.key, *house.key, *jackpot.key],
-            ix::ResolveCollect,
+            crate::ScratchCardsInstruction::RESOLVE_COLLECT,
             &jackpot_paid.to_le_bytes(),
             &movements,
         )

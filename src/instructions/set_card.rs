@@ -1,16 +1,15 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult, program::invoke};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult, program::invoke};
 use solana_system_interface::instruction as system_instruction;
 
 use crate::constants::is_admin;
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use bytemuck::Zeroable;
 
 use crate::state::config::*;
 use crate::utils::pda;
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct InitBlock {
     pub role:  u8,
     pub count: u8,
@@ -20,7 +19,7 @@ pub struct InitBlock {
     pub b:     u16,
 }
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct InitPay {
     pub scope:  u32,
     pub weight: u32,
@@ -29,13 +28,13 @@ pub struct InitPay {
     pub mult:   u16,
 }
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct InitTier {
     pub factor: u32,
     pub weight: u32,
 }
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct InitPoolEntry {
     pub mint:   [u8; 32],
     pub amount: u64,
@@ -45,7 +44,7 @@ pub struct InitPoolEntry {
 /// Writes one card of the public sheet: its layout, its pay table, its pool and every weight the
 /// deal draws against. Admin only. One card per transaction — the whole shelf doesn't fit in one.
 /// Accounts: [initializer, config, system_program]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct SetCard {
     pub index: u8,
     pub mode:  u8,
@@ -206,11 +205,15 @@ impl SetCard {
     }
 }
 
-impl ProcessInstruction for SetCard {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [initializer, config_account, system_program, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl SetCard {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        initializer: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+        system_program: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !initializer.is_signer || !is_admin(initializer.key) {
             return Err(ProgramError::MissingRequiredSignature);

@@ -1,14 +1,13 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use solana_program::{account_info::AccountInfo, pubkey::Pubkey, entrypoint::ProgramResult};
 
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::analytics::Analytics;
 use crate::state::card::{Card, CardStatus};
 use crate::utils::{engine, pda, receipt};
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolveCollect {
     pub human: Pubkey,
     /// The pot this collect drained, from the receipt's args — zero when no jackpot was won.
@@ -16,12 +15,20 @@ pub struct ResolveCollect {
 }
 
 
-impl ProcessInstruction for ResolveCollect {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [_receipt_account, vault_authority, house, card_account, ephemeral_vault,
-             magic_program, analytics_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl ResolveCollect {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        _receipt_account: &AccountInfo<'a>,
+        vault_authority: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        card_account: &AccountInfo<'a>,
+        ephemeral_vault: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        analytics_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if *ephemeral_vault.key != EPHEMERAL_VAULT_ID {
             return Err(GameError::InvalidPDA.into());

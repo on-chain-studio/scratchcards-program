@@ -1,25 +1,27 @@
-use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult};
 
 use crate::constants::VRF_PROGRAM_IDENTITY;
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::card::{Card, CardStatus};
 use crate::utils::pda;
 
 /// The VRF oracle's answer: 32 bytes of randomness signed by the VRF identity, written onto the card.
 /// Accounts: [vrf_identity (signer), card]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct CallbackReveal {
     pub randomness: [u8; 32],
 }
 
 
-impl ProcessInstruction for CallbackReveal {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [vrf_identity, card_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl CallbackReveal {
+    #[inline(always)]
+    pub fn process<'a>(
+        &self,
+        vrf_identity: &AccountInfo<'a>,
+        card_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !vrf_identity.is_signer || vrf_identity.key != &VRF_PROGRAM_IDENTITY {
             return Err(ProgramError::MissingRequiredSignature);

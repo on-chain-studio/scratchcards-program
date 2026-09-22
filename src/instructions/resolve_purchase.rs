@@ -1,11 +1,10 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID;
 use ephemeral_rollups_sdk::ephemeral_accounts::EphemeralAccount;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use solana_program::{account_info::AccountInfo, pubkey::Pubkey, entrypoint::ProgramResult};
 
 use crate::constants::JACKPOT_SHARE_BP;
 use crate::error::GameError;
-use crate::instruction::ProcessInstruction;
 use crate::state::analytics::Analytics;
 use crate::state::card::{self, Card, CardStatus};
 use crate::state::Config;
@@ -13,19 +12,28 @@ use crate::utils::{pda, receipt};
 
 /// Turns a settled receipt into a card. The seed comes later via `RequestReveal`, so a failed VRF
 /// request can't unwind a paid purchase.
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolvePurchase {
     pub human: Pubkey,
     pub card_id: u64,
 }
 
 
-impl ProcessInstruction for ResolvePurchase {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [_receipt_account, vault_authority, config_account, house, card_account,
-             ephemeral_vault, _magic_program, analytics_account, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl ResolvePurchase {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        _receipt_account: &AccountInfo<'a>,
+        vault_authority: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        card_account: &AccountInfo<'a>,
+        ephemeral_vault: &AccountInfo<'a>,
+        _magic_program: &AccountInfo<'a>,
+        analytics_account: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if *ephemeral_vault.key != EPHEMERAL_VAULT_ID {
             return Err(GameError::InvalidPDA.into());

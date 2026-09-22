@@ -1,9 +1,9 @@
 # scratch-cards-program
 
 On-chain program for **Scratch Cards** (`../scratch-cards`), in the exact shape of
-`dark-galaxy-solana`: a native (non-Anchor) program with manual dispatch,
-`ephemeral-rollups-sdk` delegation, bytemuck state, and hand-rolled CPIs for
-SPL Token and the MagicBlock VRF (no extra dependency trees).
+`dark-galaxy-solana`: a native (non-Anchor) program on Solarium's `#[program]` dispatch
+(`src/lib.rs` is the whole wire interface), `ephemeral-rollups-sdk` delegation, bytemuck state,
+and hand-rolled CPIs for SPL Token and the MagicBlock VRF (no extra dependency trees).
 
 Program id: `GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC` (`keys/program-keypair.json`) —
 the same id on both clusters, live on mainnet-beta and devnet. Scripts pick the cluster
@@ -31,8 +31,10 @@ and creates nothing, which is what makes the flow safe to retry.
 
 ## Instructions
 
-Position in `instructions!` is the wire discriminator; gaps are retired variants kept as
-placeholders so nothing renumbers.
+Each number is the little-endian u64 an instruction starts with, pinned per method in `src/lib.rs`
+with `#[instruction(discriminator = N)]` — the numbers the program has always had. 0 is a deployed
+no-op (the TEE admission probes send it), and so is every retired gap (5, 6, 8, 10, 11, 13, 14,
+19, 23), as it always was; anything past 30 is refused.
 
 | # | Name | Notes |
 | --- | --- | --- |
@@ -73,8 +75,14 @@ cards; how it is balanced and published is `RUNBOOK.md`.
 
 ```
 cargo build-sbf                              # target/deploy/scratch_cards.so
-cargo +1.89.0-sbpf-solana-v1.52 test         # engine determinism/rate tests
+cargo +1.89.0-sbpf-solana-v1.52 test         # engine determinism/rate tests, layout + wire pins
+SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
+                                             # the built .so in Mollusk: dispatch, refusals, VRF, pot
 ```
+
+The `.so` must stay within the mainnet program account (323,216 bytes of ProgramData, 45 of
+them the loader's header): the rollup clones the program at its first-seen size. Check
+`ls -l target/deploy/scratch_cards.so` before any upgrade.
 
 Operating the live game — balancing cards, publishing the sheet, house float, app
 builds — is `RUNBOOK.md`.

@@ -1,24 +1,35 @@
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
 
 use crate::constants::JACKPOT_SHARE_BP;
 use crate::error::GameError;
-use crate::instruction::{ix, ProcessInstruction};
 use crate::state::Config;
 use crate::utils::{pda, receipt, vault};
 
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestPurchase {
     pub card_id: u64,
 }
 
 
-impl ProcessInstruction for RequestPurchase {
-    fn process(&self, program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-        let [wallet, user, config_account, house, receipt_account, ephemeral_vault,
-             magic_program, vault_program, jackpot, house_ledger, magic_context, ..] = accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
+impl RequestPurchase {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn process<'a>(
+        &self,
+        wallet: &AccountInfo<'a>,
+        user: &AccountInfo<'a>,
+        config_account: &AccountInfo<'a>,
+        house: &AccountInfo<'a>,
+        receipt_account: &AccountInfo<'a>,
+        ephemeral_vault: &AccountInfo<'a>,
+        magic_program: &AccountInfo<'a>,
+        vault_program: &AccountInfo<'a>,
+        jackpot: &AccountInfo<'a>,
+        house_ledger: &AccountInfo<'a>,
+        magic_context: &AccountInfo<'a>,
+    ) -> ProgramResult {
+        let program_id = &crate::ID;
 
         if !wallet.is_signer {
             return Err(ProgramError::MissingRequiredSignature);
@@ -51,7 +62,7 @@ impl ProcessInstruction for RequestPurchase {
             program_id,
             &[b"house", &[house_bump]],
             &[*user.key, *house.key, *jackpot.key],
-            ix::ResolvePurchase,
+            crate::ScratchCardsInstruction::RESOLVE_PURCHASE,
             &self.card_id.to_le_bytes(),
             &movements,
         )
