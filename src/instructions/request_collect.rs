@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::error::GameError;
 use crate::state::card::{Card, CardStatus};
@@ -15,35 +15,35 @@ impl RequestCollect {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        user: &AccountInfo<'a>,
-        config_account: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        card_account: &AccountInfo<'a>,
-        receipt_account: &AccountInfo<'a>,
-        ephemeral_vault: &AccountInfo<'a>,
-        magic_program: &AccountInfo<'a>,
-        vault_program: &AccountInfo<'a>,
-        jackpot: &AccountInfo<'a>,
-        jackpot_ledger: &AccountInfo<'a>,
-        wallet: &AccountInfo<'a>,
-        house_ledger: &AccountInfo<'a>,
-        magic_context: &AccountInfo<'a>,
+        user: &AccountInfo,
+        config_account: &AccountInfo,
+        house: &AccountInfo,
+        card_account: &AccountInfo,
+        receipt_account: &AccountInfo,
+        ephemeral_vault: &AccountInfo,
+        magic_program: &AccountInfo,
+        vault_program: &AccountInfo,
+        jackpot: &AccountInfo,
+        jackpot_ledger: &AccountInfo,
+        wallet: &AccountInfo,
+        house_ledger: &AccountInfo,
+        magic_context: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
         // A win may open a new token slot on the player's ledger; the vault needs the owner's consent,
         // which is the session key signing here.
-        if !wallet.is_signer {
+        if !wallet.is_signer() {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         pda::validate(program_id, config_account, &[b"config"])?;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         pda::validate(program_id, jackpot, &[b"jackpot"])?;
-        if *house_ledger.key != vault::ledger(house.key) {
+        if *house_ledger.address() != vault::ledger(house.address()) {
             return Err(GameError::InvalidPDA.into());
         }
-        if *receipt_account.key != receipt::address(wallet.key) {
+        if *receipt_account.address() != receipt::address(wallet.address()) {
             return Err(GameError::InvalidPDA.into());
         }
 
@@ -54,13 +54,13 @@ impl RequestCollect {
         // win and blocking that player from ever buying again.
         let (card_id, seed) = {
             let card = Card::load(card_account)?;
-            if card.user != user.key.to_bytes() {
+            if card.user != user.address().to_bytes() {
                 return Err(GameError::Unauthorized.into());
             }
             if card.status != CardStatus::Revealed as u64 {
                 return Err(GameError::NotRevealed.into());
             }
-            pda::validate(program_id, card_account, &[b"card", user.key.as_ref()])?;
+            pda::validate(program_id, card_account, &[b"card", user.address().as_ref()])?;
             (card.card_id, card.seed)
         };
 
@@ -88,7 +88,7 @@ impl RequestCollect {
         // it cannot be re-read there, and the callback only fires if this exact receipt settled.
         let mut jackpot_paid = 0u64;
         if wins.jackpot {
-            if *jackpot_ledger.key != vault::ledger(jackpot.key) {
+            if *jackpot_ledger.address() != vault::ledger(jackpot.address()) {
                 return Err(GameError::InvalidPDA.into());
             }
             let pot = vault::sol_balance(jackpot_ledger)?;
@@ -105,7 +105,7 @@ impl RequestCollect {
             magic_program, magic_context,
             program_id,
             &[b"house", &[house_bump]],
-            &[*user.key, *house.key, *jackpot.key],
+            &[*user.address(), *house.address(), *jackpot.address()],
             crate::ScratchCardsInstruction::RESOLVE_COLLECT,
             &jackpot_paid.to_le_bytes(),
             &movements,

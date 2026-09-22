@@ -1,7 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID;
-use ephemeral_rollups_sdk::ephemeral_accounts::EphemeralAccount;
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::magicblock::EPHEMERAL_VAULT_ID;
+use crate::magicblock::create_ephemeral_account;
+use crate::chain::*;
 
 use crate::constants::JACKPOT_SHARE_BP;
 use crate::error::GameError;
@@ -24,18 +24,18 @@ impl ResolvePurchase {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        _receipt_account: &AccountInfo<'a>,
-        vault_authority: &AccountInfo<'a>,
-        config_account: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        card_account: &AccountInfo<'a>,
-        ephemeral_vault: &AccountInfo<'a>,
-        _magic_program: &AccountInfo<'a>,
-        analytics_account: &AccountInfo<'a>,
+        _receipt_account: &AccountInfo,
+        vault_authority: &AccountInfo,
+        config_account: &AccountInfo,
+        house: &AccountInfo,
+        card_account: &AccountInfo,
+        ephemeral_vault: &AccountInfo,
+        _magic_program: &AccountInfo,
+        analytics_account: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if *ephemeral_vault.key != EPHEMERAL_VAULT_ID {
+        if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
             return Err(GameError::InvalidPDA.into());
         }
         pda::validate(program_id, config_account, &[b"config"])?;
@@ -53,12 +53,16 @@ impl ResolvePurchase {
 
         let terms = *Config::card(config_account, card_id)?;
 
-        EphemeralAccount::new(house, card_account, ephemeral_vault)
-            .with_signer_seeds(&[
+        create_ephemeral_account(
+            house,
+            card_account,
+            ephemeral_vault,
+            Card::WITH_TERMS as u32,
+            &[
                 &[b"house", &[house_bump]],
                 &[b"card", self.human.as_ref(), &[card_bump]],
-            ])
-            .create(Card::WITH_TERMS as u32)?;
+            ],
+        )?;
 
         {
             let c = Card::load_mut(card_account)?;

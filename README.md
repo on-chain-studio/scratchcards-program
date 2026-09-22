@@ -1,9 +1,11 @@
 # scratch-cards-program
 
 On-chain program for **Scratch Cards** (`../scratch-cards`), in the exact shape of
-`dark-galaxy-solana`: a native (non-Anchor) program on Solarium's `#[program]` dispatch
-(`src/lib.rs` is the whole wire interface), `ephemeral-rollups-sdk` delegation, bytemuck state,
-and hand-rolled CPIs for SPL Token and the MagicBlock VRF (no extra dependency trees).
+`dark-galaxy-solana`: a native (non-Anchor) program on Pinocchio, through Solarium's `#[program]` dispatch
+(`src/lib.rs` is the whole wire interface), bytemuck state, and every call to another program written out as
+bytes: `src/chain.rs` is the chain as the program uses it, `src/magicblock.rs` the delegation,
+ephemeral-account and permission calls exactly as `ephemeral-rollups-sdk` 0.14.4 makes them.
+`tests/differential.rs` holds it to the solana-program build it replaced.
 
 Program id: `GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC` (`keys/program-keypair.json`) —
 the same id on both clusters, live on mainnet-beta and devnet. Scripts pick the cluster

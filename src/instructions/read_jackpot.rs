@@ -1,7 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program::set_return_data,
-};
+use crate::chain::*;
 
 use crate::constants::treasury_seed;
 use crate::error::GameError;
@@ -18,15 +16,15 @@ impl ReadJackpot {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        jackpot: &AccountInfo<'a>,
-        ledger: &AccountInfo<'a>,
+        jackpot: &AccountInfo,
+        ledger: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
         // No `which` arg: reads only the pot, never the house balance.
         let seed = treasury_seed(1)?;
         pda::validate(program_id, jackpot, &[seed])?;
-        if *ledger.key != vault::ledger(jackpot.key) {
+        if *ledger.address() != vault::ledger(jackpot.address()) {
             return Err(GameError::InvalidPDA.into());
         }
 

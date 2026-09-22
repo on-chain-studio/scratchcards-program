@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError};
+use crate::chain::*;
 
 use crate::state::config::CardConfig;
 
@@ -38,8 +38,8 @@ impl Card {
 
     /// Read-only, for the paths that must not write — `request_collect` reads a card it is
     /// deliberately forbidden to mark, since anyone may ask for a payout.
-    pub fn load<'a>(account: &AccountInfo<'a>) -> Result<&'a Self, ProgramError> {
-        let data = account.try_borrow_data()?;
+    pub fn load<'a>(account: &AccountInfo) -> Result<&'a Self, ProgramError> {
+        let data = account.try_borrow()?;
         // Long enough, not exactly: a pre-terms card is shorter and must still load.
         if data.len() < Self::SIZE { return Err(ProgramError::InvalidAccountData); }
         let s = bytemuck::try_from_bytes::<Self>(&data[..Self::SIZE])
@@ -49,7 +49,7 @@ impl Card {
         Ok(s)
     }
 
-    pub fn load_mut<'a>(account: &AccountInfo<'a>) -> Result<&'a mut Self, ProgramError> {
+    pub fn load_mut<'a>(account: &AccountInfo) -> Result<&'a mut Self, ProgramError> {
         let mut data = account.try_borrow_mut_data()?;
         // Long enough, not exactly: a pre-terms card is shorter and must still load.
         if data.len() < Self::SIZE { return Err(ProgramError::InvalidAccountData); }
@@ -61,9 +61,9 @@ impl Card {
     }
 
     /// The terms this card was sold under, or `None` for a pre-terms card (falls back to the shelf).
-    pub fn terms<'a>(account: &AccountInfo<'a>) -> Result<Option<&'a CardConfig>, ProgramError> {
+    pub fn terms<'a>(account: &AccountInfo) -> Result<Option<&'a CardConfig>, ProgramError> {
         if account.data_len() < Self::WITH_TERMS { return Ok(None); }
-        let data = account.try_borrow_data()?;
+        let data = account.try_borrow()?;
         bytemuck::try_from_bytes::<CardConfig>(&data[Self::SIZE..Self::WITH_TERMS])
             .map_err(|_| ProgramError::InvalidAccountData)
             .map(|r| unsafe { Some(&*(r as *const CardConfig)) })

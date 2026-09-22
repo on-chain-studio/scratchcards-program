@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::constants::JACKPOT_SHARE_BP;
 use crate::error::GameError;
@@ -17,30 +17,30 @@ impl RequestPurchase {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        wallet: &AccountInfo<'a>,
-        user: &AccountInfo<'a>,
-        config_account: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        receipt_account: &AccountInfo<'a>,
-        ephemeral_vault: &AccountInfo<'a>,
-        magic_program: &AccountInfo<'a>,
-        vault_program: &AccountInfo<'a>,
-        jackpot: &AccountInfo<'a>,
-        house_ledger: &AccountInfo<'a>,
-        magic_context: &AccountInfo<'a>,
+        wallet: &AccountInfo,
+        user: &AccountInfo,
+        config_account: &AccountInfo,
+        house: &AccountInfo,
+        receipt_account: &AccountInfo,
+        ephemeral_vault: &AccountInfo,
+        magic_program: &AccountInfo,
+        vault_program: &AccountInfo,
+        jackpot: &AccountInfo,
+        house_ledger: &AccountInfo,
+        magic_context: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !wallet.is_signer {
+        if !wallet.is_signer() {
             return Err(ProgramError::MissingRequiredSignature);
         }
         pda::validate(program_id, config_account, &[b"config"])?;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         pda::validate(program_id, jackpot, &[b"jackpot"])?;
-        if *house_ledger.key != vault::ledger(house.key) {
+        if *house_ledger.address() != vault::ledger(house.address()) {
             return Err(GameError::InvalidPDA.into());
         }
-        if *receipt_account.key != receipt::address(wallet.key) {
+        if *receipt_account.address() != receipt::address(wallet.address()) {
             return Err(GameError::InvalidPDA.into());
         }
 
@@ -61,7 +61,7 @@ impl RequestPurchase {
             magic_program, magic_context,
             program_id,
             &[b"house", &[house_bump]],
-            &[*user.key, *house.key, *jackpot.key],
+            &[*user.address(), *house.address(), *jackpot.address()],
             crate::ScratchCardsInstruction::RESOLVE_PURCHASE,
             &self.card_id.to_le_bytes(),
             &movements,

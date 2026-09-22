@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult};
+use crate::chain::*;
 
 use crate::error::GameError;
 use crate::state::card::{Card, CardStatus};
@@ -14,24 +14,24 @@ impl RequestReveal {
     #[allow(clippy::too_many_arguments)]
     pub fn process<'a>(
         &self,
-        user: &AccountInfo<'a>,
-        house: &AccountInfo<'a>,
-        card_account: &AccountInfo<'a>,
-        identity: &AccountInfo<'a>,
-        oracle_queue: &AccountInfo<'a>,
-        slot_hashes: &AccountInfo<'a>,
-        system_program: &AccountInfo<'a>,
-        vrf_program: &AccountInfo<'a>,
+        user: &AccountInfo,
+        house: &AccountInfo,
+        card_account: &AccountInfo,
+        identity: &AccountInfo,
+        oracle_queue: &AccountInfo,
+        slot_hashes: &AccountInfo,
+        system_program: &AccountInfo,
+        vrf_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         let identity_bump = pda::validate(program_id, identity, &[b"identity"])?;
-        pda::validate(program_id, card_account, &[b"card", user.key.as_ref()])?;
+        pda::validate(program_id, card_account, &[b"card", user.address().as_ref()])?;
 
         {
             let card = Card::load_mut(card_account)?;
-            if card.user != user.key.to_bytes() {
+            if card.user != user.address().to_bytes() {
                 return Err(GameError::Unauthorized.into());
             }
             // `Bought` is the first request; `Requested` is a permissionless re-fire for a dropped VRF
@@ -46,10 +46,10 @@ impl RequestReveal {
         vrf::request_randomness(
             program_id, house, identity, identity_bump, oracle_queue, system_program,
             slot_hashes, vrf_program,
-            card_account.key.to_bytes(),
+            card_account.address().to_bytes(),
             crate::ScratchCardsInstruction::CALLBACK_REVEAL.to_le_bytes(),
             vec![vrf::SerializableAccountMeta {
-                pubkey: *card_account.key,
+                pubkey: *card_account.address(),
                 is_signer: false,
                 is_writable: true,
             }],

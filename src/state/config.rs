@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError};
+use crate::chain::*;
 
 pub const DISCRIMINATOR: u64 = 1;
 pub const VERSION:       u64 = 2;
@@ -178,8 +178,8 @@ impl Config {
         account.data_len().saturating_sub(Self::HEADER) / CARD_SIZE
     }
 
-    pub fn load<'a>(account: &AccountInfo<'a>) -> Result<&'a Self, ProgramError> {
-        let data = account.try_borrow_data()?;
+    pub fn load<'a>(account: &AccountInfo) -> Result<&'a Self, ProgramError> {
+        let data = account.try_borrow()?;
         if data.len() < Self::HEADER { return Err(ProgramError::InvalidAccountData); }
         let s = bytemuck::try_from_bytes::<Self>(&data[..Self::HEADER])
             .map_err(|_| ProgramError::InvalidAccountData)
@@ -188,7 +188,7 @@ impl Config {
         Ok(s)
     }
 
-    pub fn load_mut<'a>(account: &AccountInfo<'a>) -> Result<&'a mut Self, ProgramError> {
+    pub fn load_mut<'a>(account: &AccountInfo) -> Result<&'a mut Self, ProgramError> {
         let mut data = account.try_borrow_mut_data()?;
         if data.len() < Self::HEADER { return Err(ProgramError::InvalidAccountData); }
         // Not version-checked: this is the write path where `Initialize` sets the version. Reads
@@ -200,7 +200,7 @@ impl Config {
 
     /// A published card, for playing — bounded by `card_count`, not capacity.
     pub fn card<'a>(
-        account: &AccountInfo<'a>,
+        account: &AccountInfo,
         card_id: u64,
     ) -> Result<&'a CardConfig, ProgramError> {
         if card_id >= Self::load(account)?.card_count {
@@ -211,18 +211,18 @@ impl Config {
 
     /// A slot, for writing — bounded by capacity, since this is how a card gets published.
     pub fn slot<'a>(
-        account: &AccountInfo<'a>,
+        account: &AccountInfo,
         index: usize,
     ) -> Result<&'a CardConfig, ProgramError> {
         let (from, to) = Self::span(account, index)?;
-        let data = account.try_borrow_data()?;
+        let data = account.try_borrow()?;
         bytemuck::try_from_bytes::<CardConfig>(&data[from..to])
             .map_err(|_| ProgramError::InvalidAccountData)
             .map(|r| unsafe { &*(r as *const CardConfig) })
     }
 
     pub fn slot_mut<'a>(
-        account: &AccountInfo<'a>,
+        account: &AccountInfo,
         index: usize,
     ) -> Result<&'a mut CardConfig, ProgramError> {
         let (from, to) = Self::span(account, index)?;

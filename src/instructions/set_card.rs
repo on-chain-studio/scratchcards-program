@@ -1,6 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, entrypoint::ProgramResult, program::invoke};
-use solana_system_interface::instruction as system_instruction;
+use crate::chain::*;
 
 use crate::constants::is_admin;
 use crate::error::GameError;
@@ -209,13 +208,13 @@ impl SetCard {
     #[inline(always)]
     pub fn process<'a>(
         &self,
-        initializer: &AccountInfo<'a>,
-        config_account: &AccountInfo<'a>,
-        system_program: &AccountInfo<'a>,
+        initializer: &AccountInfo,
+        config_account: &AccountInfo,
+        system_program: &AccountInfo,
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !initializer.is_signer || !is_admin(initializer.key) {
+        if !initializer.is_signer() || !is_admin(initializer.address()) {
             return Err(ProgramError::MissingRequiredSignature);
         }
         pda::validate(program_id, config_account, &[b"config"])?;
@@ -235,7 +234,7 @@ impl SetCard {
             if held < required {
                 invoke(
                     &system_instruction::transfer(
-                        initializer.key, config_account.key, required - held,
+                        initializer.address(), config_account.address(), required - held,
                     ),
                     &[initializer.clone(), config_account.clone(), system_program.clone()],
                 )?;

@@ -8,14 +8,15 @@ edition = "2021"
 crate-type = ["cdylib", "lib"]
 
 [features]
+default = ["pinocchio"]
+# Solarium's `#[program]` generates the Pinocchio dispatch when the program crate has this on.
+pinocchio = []
 no-entrypoint = []
 
 [dependencies]
 solarium = { path = "../../sensorial/systems/solarium/crates/solarium" }
-solarium-program = { path = "../../sensorial/systems/solarium/crates/solarium-program" }
-solana-program = "3"
-solana-system-interface = "2"
-ephemeral-rollups-sdk = { version = "0.14.3", features = ["modular-sdk", "access-control"] }
+solarium-program = { path = "../../sensorial/systems/solarium/crates/solarium-program", default-features = false, features = ["pinocchio"] }
+pinocchio = { version = "0.11.2", default-features = false, features = ["alloc", "copy", "cpi", "account-resize"] }
 borsh = { version = "1", features = ["derive"] }
 scratch-engine = { path = "engine" }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
