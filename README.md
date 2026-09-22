@@ -76,6 +76,8 @@ cards; how it is balanced and published is `RUNBOOK.md`.
 ```
 cargo build-sbf                              # target/deploy/scratch_cards.so
 cargo +1.89.0-sbpf-solana-v1.52 test         # engine determinism/rate tests, layout + wire pins
+scripts/parity.sh                            # the built .so against the deployed one: every
+                                             # instruction and mutation, byte for byte
 SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
                                              # the built .so in Mollusk: dispatch, refusals, VRF, pot
 ```

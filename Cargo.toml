@@ -11,11 +11,14 @@ crate-type = ["cdylib", "lib"]
 no-entrypoint = []
 
 [dependencies]
-solarium = { path = "../../sensorial/systems/solarium/crates/solarium" }
-solarium-program = { path = "../../sensorial/systems/solarium/crates/solarium-program" }
+solarium = { git = "https://github.com/sensorial-systems/solarium", rev = "21fda40a96b22cbd42a73efe62dafcd6377d750a" }
+solarium-program = { git = "https://github.com/sensorial-systems/solarium", rev = "21fda40a96b22cbd42a73efe62dafcd6377d750a" }
 solana-program = "3"
 solana-system-interface = "2"
-ephemeral-rollups-sdk = { version = "0.14.3", features = ["modular-sdk", "access-control"] }
+ephemeral-rollups-sdk = { version = "0.14.3", features = [
+    "modular-sdk",
+    "access-control",
+] }
 borsh = { version = "1", features = ["derive"] }
 scratch-engine = { path = "engine" }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
