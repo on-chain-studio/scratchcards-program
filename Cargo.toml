@@ -14,9 +14,16 @@ pinocchio = []
 no-entrypoint = []
 
 [dependencies]
-solarium = { path = "../../sensorial/systems/solarium/crates/solarium" }
-solarium-program = { path = "../../sensorial/systems/solarium/crates/solarium-program", default-features = false, features = ["pinocchio"] }
-pinocchio = { version = "0.11.2", default-features = false, features = ["alloc", "copy", "cpi", "account-resize"] }
+solarium = { git = "https://github.com/sensorial-systems/solarium", rev = "21fda40a96b22cbd42a73efe62dafcd6377d750a" }
+solarium-program = { git = "https://github.com/sensorial-systems/solarium", rev = "21fda40a96b22cbd42a73efe62dafcd6377d750a", default-features = false, features = [
+    "pinocchio",
+] }
+pinocchio = { version = "0.11.2", default-features = false, features = [
+    "alloc",
+    "copy",
+    "cpi",
+    "account-resize",
+] }
 borsh = { version = "1", features = ["derive"] }
 scratch-engine = { path = "engine" }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
