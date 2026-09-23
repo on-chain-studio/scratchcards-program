@@ -2,7 +2,8 @@
 //
 //   node scripts/play-devnet.mjs [cards]        default 3
 //   node scripts/play-devnet.mjs 3 --close      undelegate, withdraw and close the ledger after
-//   node scripts/play-devnet.mjs 1 --session    consent via the persisted session key (the app's path)
+//   node scripts/play-devnet.mjs 1 --wallet     consent with the owner wallet instead of the
+//                                               session key (masks client-only errors — avoid)
 //   ROLLUP=tee node scripts/play-devnet.mjs     play on the private TEE instead of the public ER
 //
 // Scratching is client-side, so this does the parts that touch the chain: fund, delegate,
@@ -71,7 +72,9 @@ const rollupUrl = async (signer) =>
 
 const CARDS = Number(process.argv[2]) || 3;
 const CLOSE = process.argv.includes('--close');
-const SESSION = process.argv.includes('--session');
+// Session-key consent is the default — it is the app's real path, so it catches errors the
+// wallet-direct path (owner signs its own debits) silently passes. `--wallet` opts out.
+const SESSION = !process.argv.includes('--wallet');
 
 const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
 const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; };
