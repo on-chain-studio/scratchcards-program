@@ -390,3 +390,48 @@ pub fn update_permission(
         signers_seeds,
     )
 }
+
+/// The ACL discriminator + member flags, from `ephemeral-rollups-sdk` v0.14
+/// (`access_control::instructions::create_ephemeral_permission`, `structs::member`).
+const CREATE_EPHEMERAL_PERMISSION: u64 = 6;
+const AUTHORITY_FLAG: u8 = 1 << 0;
+/// Full read (logs, balances, messages, signatures, account data) minus authority — a reader must
+/// never be able to rewrite the member list through the ACL program, only the permissioned PDA can.
+const MEMBER_READ: u8 = 0xFF & !AUTHORITY_FLAG;
+
+/// A PRIVATE **ephemeral** (ER-only) permission on `permissioned`, granting each of `readers` read
+/// access. ER-only: `payer` (a PDA) fronts the ephemeral rent — no basenet account, nothing to
+/// delegate or commit. `permissioned` and `payer` both sign via their seeds. Account order and
+/// data layout are the SDK's `CreateEphemeralPermission` (disc 6, then `is_private` byte, then
+/// each member as `flags:u8 ++ pubkey:[u8;32]`).
+pub fn create_ephemeral_permission(
+    payer: &AccountInfo,
+    permissioned: &AccountInfo,
+    permission: &AccountInfo,
+    vault: &AccountInfo,
+    magic_program: &AccountInfo,
+    readers: &[Pubkey],
+    signers_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let mut data = CREATE_EPHEMERAL_PERMISSION.to_le_bytes().to_vec();
+    data.push(1); // is_private = true
+    for reader in readers {
+        data.push(MEMBER_READ);
+        data.extend_from_slice(reader.as_ref());
+    }
+    invoke_signed(
+        &Instruction {
+            program_id: PERMISSION_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(*payer.address(), true),
+                AccountMeta::new_readonly(*permissioned.address(), true),
+                AccountMeta::new(*permission.address(), false),
+                AccountMeta::new(*vault.address(), false),
+                AccountMeta::new_readonly(*magic_program.address(), false),
+            ],
+            data,
+        },
+        &[*payer, *permissioned, *permission, *vault, *magic_program],
+        signers_seeds,
+    )
+}

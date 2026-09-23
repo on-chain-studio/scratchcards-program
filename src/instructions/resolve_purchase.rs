@@ -30,9 +30,12 @@ impl ResolvePurchase {
         house: &AccountInfo,
         card_account: &AccountInfo,
         ephemeral_vault: &AccountInfo,
-        _magic_program: &AccountInfo,
+        magic_program: &AccountInfo,
         analytics_account: &AccountInfo,
+        card_permission: &AccountInfo,
+        permission_program: &AccountInfo,
     ) -> ProgramResult {
+        let _ = permission_program; // in scope so the ACL CPI can resolve; not read directly
         let program_id = &crate::ID;
 
         if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
@@ -74,6 +77,30 @@ impl ResolvePurchase {
             c.seed = [0u8; 32];
         }
         Card::write_terms(card_account, &terms)?;
+
+        // Make the card private on the TEE. A stranger can otherwise derive ["card", user] and read
+        // the account and its entire signature history (every purchase/reveal/collect, timestamped). A
+        // private ephemeral permission naming only the player's wallet as a read member closes that:
+        // the wallet's own TEE token authorises the client's reads/subscriptions, and nobody else's.
+        // Created once (per player), ER-only (house fronts the rent), never updated (the wallet never
+        // rotates) and never closed (closing would re-expose the not-yet-compressed history).
+        if card_permission.data_len() == 0 {
+            crate::magicblock::create_ephemeral_permission(
+                house,
+                card_account,
+                card_permission,
+                ephemeral_vault,
+                magic_program,
+                // The player's wallet (its TEE token authorises the client's reads/subscriptions),
+                // and the vault program: settle_receipt is the top-level program that touches the
+                // card, and a private-rollup account only admits members as the interacting program.
+                &[self.human, crate::constants::VAULT_PROGRAM],
+                &[
+                    &[b"house", &[house_bump]],
+                    &[b"card", self.human.as_ref(), &[card_bump]],
+                ],
+            )?;
+        }
 
         // This callback only fires on a settled payment, so the count is settled money.
         pda::validate(program_id, analytics_account, &[b"analytics"])?;

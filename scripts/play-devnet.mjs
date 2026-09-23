@@ -307,6 +307,7 @@ const collectLedgers = (user) => [ledgerPda(user), ledgerPda(housePda()), ledger
 const resolvePurchaseAccounts = (user) => [
   ro(configPda()), rw(housePda()), rw(cardPda(user)),
   rw(EPHEMERAL_VAULT), ro(MAGIC_PROGRAM), rw(analyticsPda()),
+  rw(permPda(cardPda(user))), ro(PERMISSION),
 ];
 
 /** RequestReveal (28) — asks the oracle for the seed. Permissionless and retryable, so it

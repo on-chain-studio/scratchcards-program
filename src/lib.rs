@@ -354,11 +354,14 @@ impl ScratchCards {
         ephemeral_vault: &mut Account<'a>,
         magic_program: &Account<'a>,
         analytics: &mut Account<'a>,
+        card_permission: &mut Account<'a>,
+        permission_program: &Account<'a>,
         args: resolve_purchase::ResolvePurchase,
     ) -> Result<()> {
         Ok(args.process(
             receipt.info.as_view(), vault_authority.info.as_view(), config.info.as_view(), house.info.as_view(), card.info.as_view(),
             ephemeral_vault.info.as_view(), magic_program.info.as_view(), analytics.info.as_view(),
+            card_permission.info.as_view(), permission_program.info.as_view(),
         )?)
     }
 
