@@ -33,6 +33,7 @@ pub mod instructions {
     pub mod callback_reveal;
     pub mod resolve_collect;
     pub mod close_card;
+    pub mod close_stray_card;
 }
 
 pub mod state;
@@ -48,7 +49,7 @@ pub mod utils {
 // Each discriminator is the little-endian u64 an instruction starts with, and they are the ones
 // this program has always had: dense, append-only, never reused — renumbering would silently
 // repoint old clients. The gaps (5, 6, 8, 10, 11, 13, 14, 19, 23) are retired variants that
-// have always been no-ops, so they reach `noop`; anything past 30 is refused. The settle and VRF callbacks are called back by these numbers, so they can
+// have always been no-ops, so they reach `noop`; anything past 31 is refused. The settle and VRF callbacks are called back by these numbers, so they can
 // no more move than the rest. Accounts are taken in the order listed; any past the last are
 // ignored.
 //
@@ -417,6 +418,20 @@ impl ScratchCards {
         Ok(args.process(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view(), magic_program.info.as_view(),
             magic_context.info.as_view(), fees_vault.info.as_view(),
+        )?)
+    }
+
+    #[instruction(discriminator = 31)]
+    pub fn close_stray_card<'a>(
+        &self,
+        admin: &Signer<'a>,
+        house: &mut Account<'a>,
+        card: &mut Account<'a>,
+        ephemeral_vault: &mut Account<'a>,
+        magic_program: &Account<'a>,
+    ) -> Result<()> {
+        Ok(close_stray_card::CloseStrayCard.process(
+            admin.info.as_view(), house.info.as_view(), card.info.as_view(), ephemeral_vault.info.as_view(), magic_program.info.as_view(),
         )?)
     }
 }

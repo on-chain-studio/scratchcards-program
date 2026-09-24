@@ -35,7 +35,6 @@ impl ResolvePurchase {
         card_permission: &AccountInfo,
         permission_program: &AccountInfo,
     ) -> ProgramResult {
-        let _ = permission_program; // in scope so the ACL CPI can resolve; not read directly
         let program_id = &crate::ID;
 
         if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
@@ -60,6 +59,7 @@ impl ResolvePurchase {
             house,
             card_account,
             ephemeral_vault,
+            magic_program,
             Card::WITH_TERMS as u32,
             &[
                 &[b"house", &[house_bump]],
@@ -81,24 +81,21 @@ impl ResolvePurchase {
         // Make the card private on the TEE. A stranger can otherwise derive ["card", user] and read
         // the account and its entire signature history (every purchase/reveal/collect, timestamped).
         // Members: the player's wallet, whose own TEE token authorises the client's reads and
-        // subscriptions, and every program that is ever top-level over the card — a private-rollup
-        // account admits a transaction only when its top-level program is a member: the vault
-        // (settle callbacks) and the VRF program (the seed callback). ER-only (house fronts the
-        // rent) and never closed (closing would re-expose the not-yet-compressed history). Every
-        // purchase re-asserts the list, so a permission made under an older one is brought to
-        // parity the next time its owner plays; a matching one costs a read, not a write.
-        let members = [self.human, crate::constants::VAULT_PROGRAM, crate::constants::VRF_PROGRAM];
-        let signers: &[&[&[u8]]] = &[
-            &[b"house", &[house_bump]],
-            &[b"card", self.human.as_ref(), &[card_bump]],
-        ];
+        // subscriptions, and every program that is ever top-level over the card in an ordinary
+        // transaction — a private-rollup account admits one only when its top-level program is a
+        // member: the vault (settle callbacks). The VRF oracle's callback is admitted without
+        // membership, like a crank, so the VRF program is not on the list. ER-only (house fronts the
+        // rent), never closed (closing would re-expose the not-yet-compressed history) and never
+        // rewritten: an update through the ACL program drops the owning program from the list
+        // and the rollup then refuses it for good. A permission is made once and left alone.
         if card_permission.data_len() == 0 {
+            let members = [self.human, crate::constants::VAULT_PROGRAM];
+            let signers: &[&[&[u8]]] = &[
+                &[b"house", &[house_bump]],
+                &[b"card", self.human.as_ref(), &[card_bump]],
+            ];
             crate::magicblock::create_ephemeral_permission(
-                house, card_account, card_permission, ephemeral_vault, magic_program, &members, signers,
-            )?;
-        } else if !crate::magicblock::ephemeral_permission_matches(card_permission, &members)? {
-            crate::magicblock::update_ephemeral_permission(
-                house, card_account, card_permission, ephemeral_vault, magic_program, &members, signers,
+                house, card_account, card_permission, ephemeral_vault, magic_program, permission_program, &members, signers,
             )?;
         }
 

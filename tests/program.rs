@@ -25,7 +25,7 @@ fn program() -> Pubkey {
 }
 
 fn vrf_identity() -> Pubkey {
-    key(scratch_cards::constants::VRF_PROGRAM_IDENTITY.to_bytes())
+    key(scratch_cards::utils::vrf::callback_identity(&scratch_cards::ID).to_bytes())
 }
 
 fn mollusk() -> Mollusk {
@@ -156,7 +156,7 @@ fn retired_numbers_are_no_ops_too() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_past_the_list_are_invalid_data() {
     let table = Table::new();
-    for retired in [31u64, 32, 255, 1 << 40] {
+    for retired in [32u64, 33, 255, 1 << 40] {
         let mut instruction = table.reveal(vrf_identity(), &[]);
         instruction.data[..8].copy_from_slice(&retired.to_le_bytes());
         let result = mollusk().process_instruction(

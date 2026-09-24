@@ -2,12 +2,11 @@
 
 On-chain program for **Scratch Cards** (`../scratch-cards`), in the exact shape of
 `dark-galaxy-solana`: a native (non-Anchor) program on Pinocchio, through Solarium's `#[program]` dispatch
-(`src/lib.rs` is the whole wire interface), bytemuck state, and every call to another program written out as
-bytes: `src/chain.rs` is the chain as the program uses it, `src/magicblock.rs` the delegation,
-ephemeral-account and permission calls exactly as `ephemeral-rollups-sdk` 0.14.4 makes them.
-`tests/differential.rs` holds it to the solana-program build it replaced.
+(`src/lib.rs` is the whole wire interface), bytemuck state, `src/chain.rs` as the chain the program uses, and
+`src/magicblock.rs` as thin adapters over `ephemeral-rollups-pinocchio` — MagicBlock's own crate — for delegation,
+ephemeral accounts, permissions and VRF. Permissions are created once and never updated.
 
-Program id: `GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC` (`keys/program-keypair.json`) —
+Program id: `GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC` (`~/keys/scratch_program.json`) —
 the same id on both clusters, live on mainnet-beta and devnet. Scripts pick the cluster
 with `--mainnet`, which also picks the key that signs and pays (`scripts/net.mjs`).
 
@@ -78,8 +77,6 @@ cards; how it is balanced and published is `RUNBOOK.md`.
 ```
 cargo build-sbf                              # target/deploy/scratch_cards.so
 cargo +1.89.0-sbpf-solana-v1.52 test         # engine determinism/rate tests, layout + wire pins
-scripts/parity.sh                            # the built .so against the deployed one: every
-                                             # instruction and mutation, byte for byte
 SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
                                              # the built .so in Mollusk: dispatch, refusals, VRF, pot
 ```

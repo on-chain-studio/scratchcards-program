@@ -53,6 +53,7 @@ impl RequestReveal {
                 is_signer: false,
                 is_writable: true,
             }],
+            Vec::new(),
             &[b"house", &[house_bump]],
             true,
         )

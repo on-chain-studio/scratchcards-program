@@ -1,10 +1,9 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use crate::chain::*;
 
-use crate::constants::VRF_PROGRAM_IDENTITY;
 use crate::error::GameError;
 use crate::state::card::{Card, CardStatus};
-use crate::utils::pda;
+use crate::utils::{pda, vrf};
 
 /// The VRF oracle's answer: 32 bytes of randomness signed by the VRF identity, written onto the card.
 /// Accounts: [vrf_identity (signer), card]
@@ -23,7 +22,7 @@ impl CallbackReveal {
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !vrf_identity.is_signer() || vrf_identity.address() != &VRF_PROGRAM_IDENTITY {
+        if !vrf_identity.is_signer() || vrf_identity.address() != &vrf::callback_identity(program_id) {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
