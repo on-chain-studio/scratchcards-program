@@ -295,7 +295,10 @@ pub fn commit_and_undelegate(
             }
         })
         .collect();
-    invoke(&Instruction { program_id: *magic_program.address(), accounts: metas, data }, &unique)
+    if magic_program.address() != &MAGIC_PROGRAM_ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    invoke(&Instruction { program_id: MAGIC_PROGRAM_ID, accounts: metas, data }, &unique)
 }
 
 // ---------------------------------------------------------------------------------------------
