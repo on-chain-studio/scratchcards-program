@@ -372,10 +372,14 @@ async function main() {
   console.log('program ', PROGRAM.toBase58());
   console.log('rollup  ', ROLLUP, PRIVATE ? '(private)' : '(public)');
 
-  const player = admin;
+  // --player <keypair.json> plays as another key (a clean tester), else the dev key.
+  const pi = process.argv.indexOf('--player');
+  const player = pi !== -1
+    ? Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(process.argv[pi + 1]))))
+    : admin;
   const price = await cardPrice(0);
   const stake = price * CARDS;
-  console.log('player  ', player.publicKey.toBase58(), '(dev key)');
+  console.log('player  ', player.publicKey.toBase58(), pi !== -1 ? '(--player)' : '(dev key)');
   console.log('card 0  ', (price / 1e9).toFixed(4), 'SOL ×', CARDS, 'cards\n');
 
   // TOKEN_AS lets us test whether the caller's identity matters at all, or only which

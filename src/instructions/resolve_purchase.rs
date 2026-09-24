@@ -79,26 +79,26 @@ impl ResolvePurchase {
         Card::write_terms(card_account, &terms)?;
 
         // Make the card private on the TEE. A stranger can otherwise derive ["card", user] and read
-        // the account and its entire signature history (every purchase/reveal/collect, timestamped). A
-        // private ephemeral permission naming only the player's wallet as a read member closes that:
-        // the wallet's own TEE token authorises the client's reads/subscriptions, and nobody else's.
-        // Created once (per player), ER-only (house fronts the rent), never updated (the wallet never
-        // rotates) and never closed (closing would re-expose the not-yet-compressed history).
+        // the account and its entire signature history (every purchase/reveal/collect, timestamped).
+        // Members: the player's wallet, whose own TEE token authorises the client's reads and
+        // subscriptions, and every program that is ever top-level over the card — a private-rollup
+        // account admits a transaction only when its top-level program is a member: the vault
+        // (settle callbacks) and the VRF program (the seed callback). ER-only (house fronts the
+        // rent) and never closed (closing would re-expose the not-yet-compressed history). Every
+        // purchase re-asserts the list, so a permission made under an older one is brought to
+        // parity the next time its owner plays; a matching one costs a read, not a write.
+        let members = [self.human, crate::constants::VAULT_PROGRAM, crate::constants::VRF_PROGRAM];
+        let signers: &[&[&[u8]]] = &[
+            &[b"house", &[house_bump]],
+            &[b"card", self.human.as_ref(), &[card_bump]],
+        ];
         if card_permission.data_len() == 0 {
             crate::magicblock::create_ephemeral_permission(
-                house,
-                card_account,
-                card_permission,
-                ephemeral_vault,
-                magic_program,
-                // The player's wallet (its TEE token authorises the client's reads/subscriptions),
-                // and the vault program: settle_receipt is the top-level program that touches the
-                // card, and a private-rollup account only admits members as the interacting program.
-                &[self.human, crate::constants::VAULT_PROGRAM],
-                &[
-                    &[b"house", &[house_bump]],
-                    &[b"card", self.human.as_ref(), &[card_bump]],
-                ],
+                house, card_account, card_permission, ephemeral_vault, magic_program, &members, signers,
+            )?;
+        } else if !crate::magicblock::ephemeral_permission_matches(card_permission, &members)? {
+            crate::magicblock::update_ephemeral_permission(
+                house, card_account, card_permission, ephemeral_vault, magic_program, &members, signers,
             )?;
         }
 
