@@ -119,6 +119,8 @@ const vaultDepositIx = (owner, mint, amount, prog = TOKEN) => {
     isSol ? ro(SystemProgram.programId) : rw(ataOf(reservePda(), mint, prog)),
     isSol ? ro(SystemProgram.programId) : rw(ataOf(owner, mint, prog)),
     ro(prog), ro(SystemProgram.programId),
+    // The wallet's session store, created with the ledger on first use.
+    rw(pda([Buffer.from('session'), owner.toBuffer()], VAULT)),
   ];
   // Token-2022 transfers are checked, and checked transfers carry the mint.
   if (!isSol && prog.equals(T22)) keys.push(ro(mint));

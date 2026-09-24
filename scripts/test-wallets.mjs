@@ -4,12 +4,13 @@
 // a keypair nobody had saved. Isolation between runs is worth keeping, but it comes from
 // closing the *ledgers* at the end — not from throwing the wallets away.
 //
-// Keypairs persist in scripts/.test-wallets.json; balances are topped up only when short.
+// Keypairs persist in ~/keys/scratch_test_wallets.json; balances are topped up only when short.
 
 import fs from 'fs';
 import { Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { KEYS_DIR } from './net.mjs';
 
-const STORE = 'scripts/.test-wallets.json';
+const STORE = `${KEYS_DIR}/scratch_test_wallets.json`;
 
 /** Loads named wallets, creating any that don't exist yet. */
 export function wallets(names) {
@@ -70,7 +71,7 @@ export async function sweep(conn, admin, wallet, leave = 900_000) {
     // Never swallow this. A cleanup failure that reports success is how funds go missing
     // without anyone noticing — say so loudly and leave the balance where it can be found.
     console.log(`  ⚠ could not sweep ${wallet.publicKey.toBase58()}: ${String(e).split('\n')[0]}`);
-    console.log(`    ${(have / 1e9).toFixed(6)} SOL left there — keys are in scripts/.test-wallets.json`);
+    console.log(`    ${(have / 1e9).toFixed(6)} SOL left there — keys are in ${STORE}`);
     return 0;
   }
 }

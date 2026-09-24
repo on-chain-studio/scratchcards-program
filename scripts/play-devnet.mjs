@@ -90,6 +90,29 @@ const identityPda = () => pda([Buffer.from('identity')]);
 // One card per player — a second purchase is refused by the account already existing.
 const cardPda = (user) => pda([Buffer.from('card'), user.toBuffer()]);
 const ledgerPda = (o) => pda([Buffer.from('ledger'), o.toBuffer()], VAULT);
+/** `["session", owner]` — the wallet's session store at the vault, never delegated. */
+const sessionPda = (o) => pda([Buffer.from('session'), o.toBuffer()], VAULT);
+
+/** Whether the store's entry for this game holds `key`: in the ring, or in the temporary slot
+ *  before its expiry. A 48-byte header, then 232 bytes per program. */
+const sessionAllows = (data, key) => {
+  if (!data || data.length < 48) return false;
+  const count = data.readUInt32LE(44);
+  const now = Math.floor(Date.now() / 1000);
+  for (let i = 0; i < count; i++) {
+    const at = 48 + i * 232;
+    if (at + 232 > data.length) break;
+    if (!PROGRAM.equals(new PublicKey(data.subarray(at, at + 32)))) continue;
+    const temporary = new PublicKey(data.subarray(at + 32, at + 64));
+    const expiresAt = Number(data.readBigInt64LE(at + 64));
+    if (temporary.equals(key) && now < expiresAt) return true;
+    for (let r = 0; r < 5; r++) {
+      const o = at + 72 + r * 32;
+      if (key.equals(new PublicKey(data.subarray(o, o + 32)))) return true;
+    }
+  }
+  return false;
+};
 const reservePda = () => pda([Buffer.from('vault')], VAULT);
 const permPda = (a) => pda([Buffer.from('permission:'), a.toBuffer()], PERMISSION);
 const ataOf = (o, m) => PublicKey.findProgramAddressSync(
@@ -202,6 +225,7 @@ const vaultDepositIx = (owner, mint, amount) => {
       isSol ? ro(SystemProgram.programId) : rw(ataOf(reservePda(), mint)),
       isSol ? ro(SystemProgram.programId) : rw(ataOf(owner, mint)),
       ro(TOKEN), ro(SystemProgram.programId),
+      rw(sessionPda(owner)),
     ],
     data: Buffer.concat([anchorDisc('deposit'), mint.toBuffer(), u64(amount),
                          Buffer.from([0]), Buffer.from([0])]),
@@ -252,7 +276,7 @@ const closeLedgerIx = (owner) => {
     // The rent comes back to whoever paid it, and they have to sign for it. A wallet funds
     // its own ledger — the vault refuses otherwise — so the player is both.
     keys: [sg(owner), sg(owner), rw(ledger), rw(reservePda()), rw(permPda(ledger)),
-           ro(PERMISSION), ro(TOKEN), ro(SystemProgram.programId)],
+           ro(PERMISSION), ro(TOKEN), ro(SystemProgram.programId), rw(sessionPda(owner))],
     data: anchorDisc('close_ledger'),
   });
 };
@@ -275,12 +299,13 @@ const requestPurchaseIx = (signer, user, cardId) => new TransactionInstruction({
   data: Buffer.concat([header(24), u64(cardId)]),
 });
 
-/** assign_ledger_authorization — grants a session key consent over this ledger's debits.
- *  basenet only; the owner signs. */
-const assignAuthorizationIx = (owner, authorized) => new TransactionInstruction({
+/** authorize_session — lets a session key consent for this game on the owner's ledger, into
+ *  the game's ring of five persisted keys. basenet only; the owner signs, and pays the entry's
+ *  rent the first time. Creates the store if the ledger predates it. */
+const authorizeSessionIx = (owner, key) => new TransactionInstruction({
   programId: VAULT,
-  keys: [rw(ledgerPda(owner)), sgro(owner)],
-  data: Buffer.concat([anchorDisc('assign_ledger_authorization'), authorized.toBuffer()]),
+  keys: [rw(sessionPda(owner)), sg(owner), ro(SystemProgram.programId)],
+  data: Buffer.concat([anchorDisc('authorize_session'), PROGRAM.toBuffer(), key.toBuffer(), u64(0)]),
 });
 
 /** settle_receipt — top-level vault. Moves the balances, then calls back into the game
@@ -294,8 +319,10 @@ const settleReceiptIx = (user, consenter, consenterSigns, ledgers, extra) =>
       { pubkey: consenter, isSigner: consenterSigns, isWritable: false },
       ro(PROGRAM), ro(vaultAuthorityPda()),
       rw(EPHEMERAL_VAULT), ro(MAGIC_PROGRAM), rw(MAGIC_CONTEXT),
-      // the receipt's ledgers, in index order, then whatever the callback needs
+      // the receipt's ledgers, in index order, the player's session store, then whatever
+      // the callback needs
       ...ledgers.map(rw),
+      ro(sessionPda(user)),
       ...extra,
     ],
     data: anchorDisc('settle_receipt'),
@@ -390,12 +417,12 @@ async function main() {
   if (PRIVATE && process.env.TOKEN_AS) console.log(`   (auth token signed by ${process.env.TOKEN_AS})`);
   await captureLogs(tee);
 
-  // The app's path: a session key consents to buys. Persisted, so the assignment written
-  // onto the ledger once stays valid across runs.
+  // The app's path: a session key consents to buys. Persisted, so the grant written into the
+  // wallet's session store once stays valid across runs.
   const session = SESSION ? wallets(['session']).session : null;
   if (session) console.log(`session  ${session.publicKey.toBase58()} (persisted)\n`);
 
-  // 1 ── the dev key's ledger persists between runs: top up, assign, delegate — only as needed
+  // 1 ── the dev key's ledger persists between runs: top up, authorise, delegate — only as needed
   console.log('1. ensure the ledger is funded and on the rollup');
   let ledgerStart = 0;
   try {
@@ -411,11 +438,13 @@ async function main() {
     const led = info && decodeLedger(info.data);
     ledgerStart = Number(led?.sol ?? 0n);
     const shortfall = Math.max(0, stake - ledgerStart);
-    const needsAssign = !!session && !led?.authorized?.equals(session.publicKey);
+    // The store is never delegated, so it is read on basenet whatever the ledger is doing.
+    const store = (await base.getAccountInfo(sessionPda(player.publicKey)))?.data;
+    const needsAssign = !!session && !sessionAllows(store, session.publicKey);
 
-    // Deposits and session assignment are basenet verbs, so a delegated ledger comes home
-    // first — but only when it actually needs something.
-    if ((shortfall || needsAssign) && onTee) {
+    // A deposit is a basenet verb on the ledger, so a delegated one comes home first — but
+    // only when it actually needs one. Authorising a key touches only the store.
+    if (shortfall && onTee) {
       await send(tee, [undelegateLedgerIx(player.publicKey, player.publicKey)], [player]);
       for (let i = 0; i < 40; i++) {
         if ((await base.getAccountInfo(ledgerPda(player.publicKey)))?.owner.equals(VAULT)) {
@@ -427,17 +456,17 @@ async function main() {
       if (onTee) throw new Error('undelegation never landed on basenet');
       ok('undelegated to top up');
     }
-    // Deposit, assignment and delegation are all basenet verbs against the same ledger, so
-    // they ride one transaction — the app's deposit does the same. Nothing observes the
-    // ledger funded-but-undelegated in between.
+    // Deposit, authorisation and delegation are all basenet verbs, so they ride one
+    // transaction — the app's deposit does the same. Nothing observes the ledger
+    // funded-but-undelegated in between.
     const ixs = [];
     if (shortfall) ixs.push(vaultDepositIx(player.publicKey, SOL_MINT, shortfall));
-    if (needsAssign) ixs.push(assignAuthorizationIx(player.publicKey, session.publicKey));
+    if (needsAssign) ixs.push(authorizeSessionIx(player.publicKey, session.publicKey));
     if (!onTee) ixs.push(delegateLedgerIx(player.publicKey, player.publicKey, validator));
     if (ixs.length) {
       await send(base, ixs, [player]);
       if (shortfall) ok(`deposited ${(shortfall / 1e9).toFixed(4)} SOL (ledger had ${(ledgerStart / 1e9).toFixed(4)})`);
-      if (needsAssign) ok('session key assigned on the ledger');
+      if (needsAssign) ok('session key granted in the store');
     }
     if (!onTee) {
       // Delegation completes on basenet, but the rollup has to observe and clone the account
