@@ -115,7 +115,7 @@ export interface Card {
 }
 
 /**
- * Mainnet decimals, read from the mint accounts by `fetch-prices.mjs`.
+ * Mainnet decimals, read from the mint accounts by `scratch-ops fetch-prices`.
  *
  * A prize is stored in base units, so this is what decides its value. Devnet's stand-ins are
  * 0-decimal and cannot express a fraction of a token — that is a publish-time limit, not a

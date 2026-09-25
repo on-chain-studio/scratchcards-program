@@ -10,8 +10,9 @@ treasury instructions. Permissions are created once and never updated. What is i
 scratch cards.
 
 Program id: `GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC` (`~/keys/scratch_program.json`) —
-the same id on both clusters, live on mainnet-beta and devnet. Scripts pick the cluster
-with `--mainnet`, which also picks the key that signs and pays (`scripts/net.mjs`).
+the same id on both clusters, live on mainnet-beta and devnet. The operator's tool is `cli/`
+(`scratch-ops`, below), which picks the cluster with `--mainnet`. Admin is the ops key alone;
+the dev key only reads the analytics.
 
 ## Money
 
@@ -91,5 +92,30 @@ them the loader's header): the rollup clones the program at its first-seen size.
 
 Operating the live game — balancing cards, publishing the sheet, house float, app
 builds — is `RUNBOOK.md`.
+
+## Operating it
+
+`cli/` is `scratch-ops`. Every instruction it sends is built by the client Solarium generates from
+the `#[program]` block in `src/lib.rs` — the admin instructions at this program's own numbers —
+and every account it reads is cast into the program's own state types. What every game's tooling
+shares — the clusters, the admin key, the TEE login, the treasury instructions, moving between
+rollups — is [`casino-ops`](https://github.com/on-chain-studio/casino-ops). It is a workspace of
+its own, so `cargo build-sbf` and `cargo test` here never build it.
+
+```
+cd cli
+cargo run -- setup                   # initialize, open the house + jackpot ledgers, delegate
+cargo run -- publish [--cards-only]  # tools/sheet/cards.json onto the shelf (devnet: its stand-in mints too)
+cargo run -- verify                  # every field of every card against the sheet
+cargo run -- play [cards]            # buy, reveal and collect real cards (--close reclaims the ledger)
+cargo run -- close-stray-cards [--go] # cards of an older layout, closed by address
+cargo run -- top-up | acquire-float  # the house float (RUNBOOK.md)
+cargo run -- status | cards | analytics [--json] [--watch] | card [player] | help
+```
+
+Devnet unless `--mainnet`; the TEE unless `--public`. The signing key is `--keypair`,
+`$CASINO_ADMIN_KEYPAIR`, or the Solana CLI's own. Admin commands want the ops key
+(`~/keys/casino_admin.json`): unlike the games on casino-core's default pair, scratch cards
+takes the ops key alone (`ids::OPS_ONLY`), and the dev key reads the analytics and nothing more.
 
 (Host `cargo test` needs rustc ≥1.89; the solana-bundled toolchain works.)

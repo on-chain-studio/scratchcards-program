@@ -1,0 +1,37 @@
+[package]
+name = "scratch-ops"
+version = "0.1.0"
+edition = "2021"
+description = "Operates Scratch Cards: stands the program up, publishes and verifies the card sheet, keeps the house liquid, reads the analytics, and plays cards on devnet — through the client Solarium generates from the program."
+publish = false
+
+# A workspace of its own. The program's `cargo build-sbf` and `cargo test` never see this crate —
+# tokio and an RPC client have no business in an SBF build — and its lockfile stays apart from
+# the program's.
+[workspace]
+
+[[bin]]
+name = "scratch-ops"
+path = "src/main.rs"
+
+[dependencies]
+# The program, for its state types and its argument structs; the client is generated from it.
+scratch-cards = { path = "..", features = ["no-entrypoint"] }
+solarium-client = { git = "https://github.com/sensorial-systems/solarium", rev = "85f77a6ac12ea26a65b5e950a0f463e898399939" }
+casino-core = { git = "ssh://git@github.com/on-chain-studio/casino-core.git" }
+casino-ops = { git = "ssh://git@github.com/on-chain-studio/casino-ops.git" }
+
+anyhow = "1"
+base64 = "0.22"
+bincode = "1"
+bytemuck = "1"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+# Key order kept, so a rewritten prices.json diffs as the values that moved.
+serde_json = { version = "1", features = ["preserve_order"] }
+solana-sdk = "4.1"
+# Only for a getProgramAccounts filtered by the card discriminator: casino-ops lists by size.
+solana-client = "4.3"
+solana-system-interface = { version = "3", features = ["bincode"] }
+tokio = { version = "1", features = ["full"] }

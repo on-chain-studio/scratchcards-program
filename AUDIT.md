@@ -29,6 +29,10 @@ Scope: `scratch-cards-program/src` (all instructions, state, utils), `engine/src
 > identity, the create-once permissions (the analytics one, and each card's private one made in
 > `resolve_purchase`), the pinned CPI targets and the instruction numbers are what the program
 > already had.
+>
+> The JS scripts some findings cite (`scripts/*.mjs`) were retired the same day for `cli/`
+> (`scratch-ops`), which builds every instruction with the client Solarium generates from the
+> program; their line references are to the last commit that had them.
 
 Each item below is self-contained — location, what breaks, and what to do — so they can be
 taken in any order. Severity order is the recommended order.
