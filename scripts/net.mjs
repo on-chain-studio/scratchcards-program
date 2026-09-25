@@ -30,7 +30,7 @@ export const PUBLIC_ER = MAINNET ? 'https://mainnet.magicblock.app'
 /** The keypair scripts sign and pay with: the dev key, or the mainnet ops key. Both are in the
  *  program's ADMIN_PUBKEYS, so either passes the admin gate — this only decides whose funds move. */
 export const KEYS_DIR = process.env.KEYS_DIR ?? `${os.homedir()}/keys`;
-export const ADMIN_PATH = MAINNET ? `${KEYS_DIR}/casino_admin.json` : `${KEYS_DIR}/dev.json`;
+export const ADMIN_PATH = `${KEYS_DIR}/casino_admin.json`;
 
 /**
  * token key → mint: the devnet stand-ins, or the real mints fetch-prices.mjs read off mainnet.
