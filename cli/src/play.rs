@@ -138,7 +138,12 @@ pub async fn play(chain: &Chain, wallet: &Keypair, cards: u32, card_id: u64, clo
                 // Net of the price: SOL paid for the card comes back out of any SOL win.
                 let was = before.balance(mint) - if *mint == vault::SOL_MINT { price.min(before.balance(mint)) } else { 0 };
                 if *amount > was {
-                    won.push(format!("{} {}", amount - was, mints.symbol(mint)));
+                    // SOL in SOL; a token in its base units, which the stand-in mints make whole.
+                    won.push(if *mint == vault::SOL_MINT {
+                        format!("{} SOL", sol(amount - was))
+                    } else {
+                        format!("{} {}", amount - was, mints.symbol(mint))
+                    });
                 }
             }
         }
