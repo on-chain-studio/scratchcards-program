@@ -9,6 +9,7 @@
 
 use bytemuck::Zeroable;
 use mollusk_svm::Mollusk;
+use pinocchio::error::ProgramError;
 use solana_account::Account;
 use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -122,7 +123,10 @@ fn a_reveal_missing_its_card_is_refused_for_the_account() {
     let mut instruction = table.reveal(vrf_identity(), &[]);
     instruction.accounts.truncate(1);
     let result = mollusk().process_instruction(&instruction, &[(vrf_identity(), wallet())]);
-    assert_eq!(result.raw_result, Err(InstructionError::NotEnoughAccountKeys));
+    // The runtime still reports this code as the deprecated `NotEnoughAccountKeys`, and a
+    // program has no way to return `MissingAccount`, so it is checked as the program raised it.
+    let error = result.raw_result.unwrap_err();
+    assert_eq!(ProgramError::try_from(error), Ok(ProgramError::NotEnoughAccountKeys));
 }
 
 #[test]
