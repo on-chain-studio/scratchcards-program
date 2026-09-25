@@ -608,6 +608,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "casino-core"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "bytemuck",
+ "ephemeral-rollups-pinocchio",
+ "pinocchio",
+ "sha2 0.10.9",
+ "solana-address",
+]
+
+[[package]]
 name = "cc"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2283,7 +2295,7 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "bytemuck",
- "ephemeral-rollups-pinocchio",
+ "casino-core",
  "mollusk-svm",
  "pinocchio",
  "scratch-engine",
@@ -2298,6 +2310,9 @@ dependencies = [
 [[package]]
 name = "scratch-engine"
 version = "0.1.0"
+dependencies = [
+ "casino-core",
+]
 
 [[package]]
 name = "sec1"
@@ -4148,27 +4163,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[patch.unused]]
-name = "slots"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "slots-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "casino-core"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "page"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "blackjack"
+name = "casino-ops"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "blackjack-engine"
+name = "casino-web"
 version = "0.1.0"
 
 [[patch.unused]]
@@ -4180,9 +4183,17 @@ name = "video-bingo"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "casino-ops"
+name = "slots"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "casino-web"
+name = "slots-engine"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "blackjack"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "blackjack-engine"
 version = "0.1.0"

@@ -1,12 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
-
-use crate::constants::is_admin;
-use crate::error::GameError;
 use bytemuck::Zeroable;
+use casino_core::chain::*;
+use casino_core::{pda, Casino};
 
+use crate::error::GameError;
 use crate::state::config::*;
-use crate::utils::pda;
+use crate::ScratchCards;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct InitBlock {
@@ -214,14 +213,12 @@ impl SetCard {
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !initializer.is_signer() || !is_admin(initializer.address()) {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
+        ScratchCards::require_admin(initializer)?;
         pda::validate(program_id, config_account, &[b"config"])?;
         self.validate()?;
 
         // Overwrite a published card or append the next — never leave a gap, which would publish zeroed cards.
-        let published = Config::load(config_account)?.card_count;
+        let published = Config::load(config_account)?.count;
         if self.index as u64 > published {
             return Err(GameError::InvalidCard.into());
         }
@@ -281,8 +278,8 @@ impl SetCard {
 
         // Publish only after writing, so a card is never visible without content.
         let cfg = Config::load_mut(config_account)?;
-        if self.index as u64 >= cfg.card_count {
-            cfg.card_count = self.index as u64 + 1;
+        if self.index as u64 >= cfg.count {
+            cfg.count = self.index as u64 + 1;
         }
 
         Ok(())

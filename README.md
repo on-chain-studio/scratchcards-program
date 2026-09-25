@@ -2,9 +2,12 @@
 
 On-chain program for **Scratch Cards** (`../scratch-cards`), in the exact shape of
 `dark-galaxy-solana`: a native (non-Anchor) program on Pinocchio, through Solarium's `#[program]` dispatch
-(`src/lib.rs` is the whole wire interface), bytemuck state, `src/chain.rs` as the chain the program uses, and
-`src/magicblock.rs` as thin adapters over `ephemeral-rollups-pinocchio` — MagicBlock's own crate — for delegation,
-ephemeral accounts, permissions and VRF. Permissions are created once and never updated.
+(`src/lib.rs` is the whole wire interface) and bytemuck state. Everything below the game is
+`casino-core` (`../casino-core`), shared with the other games on the shelf: the chain as the
+programs use it, the vault and its receipts, MagicBlock's delegation, ephemeral accounts,
+permissions and VRF (through `ephemeral-rollups-pinocchio`), the config shelf, and the admin and
+treasury instructions. Permissions are created once and never updated. What is in `src/` is
+scratch cards.
 
 Program id: `GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC` (`~/keys/scratch_program.json`) —
 the same id on both clusters, live on mainnet-beta and devnet. Scripts pick the cluster
@@ -35,22 +38,23 @@ and creates nothing, which is what makes the flow safe to retry.
 Each number is the little-endian u64 an instruction starts with, pinned per method in `src/lib.rs`
 with `#[instruction(discriminator = N)]` — the numbers the program has always had. 0 is a deployed
 no-op (the TEE admission probes send it), and so is every retired gap (5, 6, 8, 10, 11, 13, 14,
-19, 23), as it always was; anything past 30 is refused.
+19, 23), as it always was; anything past 31 is refused.
 
 | # | Name | Notes |
 | --- | --- | --- |
-| 1 | Initialize | Admin, idempotent: config shelf + house/jackpot/analytics PDAs, and the analytics TEE permission (members enforced on every run). The card count never shrinks. |
-| 2/3/4 | Delegate / Undelegate / RequestUndelegation | Admin-gated; any game PDA (house, analytics) to the TEE. |
+| 1 | Initialize | Admin, idempotent: config shelf + house/jackpot/analytics PDAs, and the analytics TEE permission (created once, never rewritten — an update drops the program from it on the TEE). The card count never shrinks. |
+| 2/3/4 | Delegate / Undelegate / RequestUndelegation | Admin-gated (the ops key alone, as every admin instruction here); any game PDA (house, analytics) to the TEE. |
 | 7 | CloseCard | Admin escape hatch for a stranded card; rent returns to the house. |
 | 9 | SetCard | Admin: one card of the sheet, rewritten in place. |
-| 12 | CallbackReveal | The VRF identity writes the 32-byte seed; status → Revealed. Scratching is pure client. |
+| 12 | CallbackReveal | The VRF's identity scoped to this program (`["identity", program]` at the VRF program) writes the 32-byte seed; status → Revealed. Scratching is pure client. |
 | 15–22, 30 | Ledger ops | Open / delegate / close / authorize / privacy / undelegate the house and jackpot ledgers; WithdrawHouse (17); ReadJackpot (21). Admin-gated. |
 | 24 | RequestPurchase | Session key consents. Receipt: price − take → house, take (10%) → jackpot. Callback = 27. |
 | 25 | RequestCollect | Evaluates the revealed card. Receipt: winnings house → player, pot → player on a jackpot line. Callback = 29. |
 | 26 | GrowConfig | Admin: grow the shelf. |
-| 27 | ResolvePurchase | Settle callback: creates the ephemeral card with its terms; counts the sale in analytics. |
-| 28 | RequestReveal | Permissionless and retryable (from Bought *or* Requested): CPI to MagicBlock VRF. |
+| 27 | ResolvePurchase | Settle callback: creates the ephemeral card with its terms and, the first time, the card's private ER permission (the wallet and the vault as full readers); counts the sale in analytics. |
+| 28 | RequestReveal | Permissionless and retryable (from Bought *or* Requested): a scoped, high-priority request to MagicBlock VRF. |
 | 29 | ResolveCollect | Settle callback: closes the card; counts the payout in analytics. |
+| 31 | CloseStrayCard | Admin: drops a card of an older layout by address; a current-size card is refused. |
 
 ## The engine
 
@@ -60,7 +64,8 @@ an on-chain `CardConfig`. **The crate is the source of truth** — the client mu
 an identical card from the same seed, or a player scratches one card and is paid for
 another.
 
-The deal is deterministic: xoroshiro128++ seeded by folding all 32 seed bytes through
+The deal is deterministic: xoroshiro128++ (`casino_core::rng`, which the engine takes with no
+default features — no Pinocchio in the wasm) seeded by folding all 32 seed bytes through
 splitmix64 (using only the first 8 would cap the card space at 2⁶⁴), with weights drawn
 against `TOTAL = 2³²` and no modulo.
 
@@ -77,8 +82,7 @@ cards; how it is balanced and published is `RUNBOOK.md`.
 ```
 cargo build-sbf                              # target/deploy/scratch_cards.so
 cargo +1.89.0-sbpf-solana-v1.52 test         # engine determinism/rate tests, layout + wire pins
-SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
-                                             # the built .so in Mollusk: dispatch, refusals, VRF, pot
+cargo test --test program -- --ignored       # the built .so in Mollusk: dispatch, refusals, VRF, pot
 ```
 
 The `.so` must stay within the mainnet program account (323,216 bytes of ProgramData, 45 of

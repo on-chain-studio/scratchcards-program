@@ -1,30 +1,28 @@
 //! Scratch Cards. The `#[program]` block below is the whole wire interface: every instruction, its
 //! number, its accounts in order and its arguments. What each one does lives in `instructions`.
+//!
+//! Everything below the game — the chain, the vault, MagicBlock, the VRF, the treasury
+//! instructions — is `casino-core`, shared with the other cabinets on the shelf rather than
+//! copied into each program. What is here is scratch cards: the shelf of cards, the card a player
+//! buys, and the progressive pot a share of every sale feeds.
 
 use solarium::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use solarium_program::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use solarium_program::{Account, Remaining, Signer};
 
-use crate::instructions::*;
+// Public, so a client generated from the block below finds its argument types where it names them.
+pub use casino_core::admin::*;
+pub use crate::instructions::*;
 
-pub mod chain;
 pub mod constants;
 pub mod error;
-pub mod magicblock;
 
 pub mod instructions {
     pub mod initialize;
-    pub mod open_ledger;
-    pub mod close_ledger;
     pub mod read_jackpot;
-    pub mod set_privacy;
-    pub mod withdraw_house;
-    pub mod delegate_treasury;
-    pub mod undelegate_treasury;
     pub mod set_card;
-    pub mod grow_config;
-    pub mod delegation;
-    pub mod authorize_treasury;
 
     pub mod request_purchase;
     pub mod resolve_purchase;
@@ -39,19 +37,18 @@ pub mod instructions {
 pub mod state;
 
 pub mod utils {
-    pub mod pda;
-    pub mod vrf;
-    pub mod vault;
-    pub mod receipt;
     pub mod engine;
 }
 
 // Each discriminator is the little-endian u64 an instruction starts with, and they are the ones
 // this program has always had: dense, append-only, never reused — renumbering would silently
 // repoint old clients. The gaps (5, 6, 8, 10, 11, 13, 14, 19, 23) are retired variants that
-// have always been no-ops, so they reach `noop`; anything past 31 is refused. The settle and VRF callbacks are called back by these numbers, so they can
-// no more move than the rest. Accounts are taken in the order listed; any past the last are
-// ignored.
+// have always been no-ops, so they reach `noop`; anything past 31 is refused. The settle and VRF
+// callbacks are called back by these numbers, so they can no more move than the rest. Accounts
+// are taken in the order listed; any past the last are ignored.
+//
+// The admin instructions are `casino-core`'s, but not at the numbers the other games give them:
+// this program's numbering predates the shared one, and a deployed number cannot move to match.
 //
 // `Signer` stands only where the handler's first check was that very signature, so a refusal
 // still reads MissingRequiredSignature. The callbacks' authorities stay plain accounts: they are
@@ -60,8 +57,7 @@ pub mod utils {
 impl ScratchCards {
     /// Does nothing with whatever it is given — kept deployed so a transaction can carry an
     /// arbitrary account list with no execution at all, which is how the TEE's admission rules are
-    /// probed (`scripts/_noop-admission.mjs`). Every retired number has always landed here too,
-    /// and still does.
+    /// probed. Every retired number has always landed here too, and still does.
     #[instruction(
         discriminator = 0,
         alias = 5, alias = 6, alias = 8, alias = 10, alias = 11,
@@ -103,7 +99,7 @@ impl ScratchCards {
         system_program: &Account<'a>,
         args: delegation::Delegate,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<ScratchCards>(
             payer.info.as_view(), pda.info.as_view(), owner_program.info.as_view(), buffer.info.as_view(), delegation_record.info.as_view(),
             delegation_metadata.info.as_view(), delegation_program.info.as_view(), system_program.info.as_view(),
         )?)
@@ -119,7 +115,7 @@ impl ScratchCards {
         system_program: &Account<'a>,
         args: delegation::Undelegate,
     ) -> Result<()> {
-        Ok(args.process(delegated_pda.info.as_view(), buffer.info.as_view(), payer.info.as_view(), system_program.info.as_view())?)
+        Ok(args.process::<ScratchCards>(delegated_pda.info.as_view(), buffer.info.as_view(), payer.info.as_view(), system_program.info.as_view())?)
     }
 
     #[instruction(discriminator = 4)]
@@ -131,7 +127,7 @@ impl ScratchCards {
         magic_program: &Account<'a>,
         fees_vault: &mut Account<'a>,
     ) -> Result<()> {
-        Ok(delegation::RequestUndelegation.process(
+        Ok(delegation::RequestUndelegation.process::<ScratchCards>(
             payer.info.as_view(), pda.info.as_view(), magic_context.info.as_view(), magic_program.info.as_view(), fees_vault.info.as_view(),
         )?)
     }
@@ -185,7 +181,7 @@ impl ScratchCards {
         system_program: &Account<'a>,
         args: open_ledger::OpenLedger,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<ScratchCards>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), permission.info.as_view(), permission_program.info.as_view(),
             vault_program.info.as_view(), system_program.info.as_view(),
         )?)
@@ -205,7 +201,7 @@ impl ScratchCards {
         system_program: &Account<'a>,
         args: delegate_treasury::DelegateTreasury,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<ScratchCards>(
             admin.info.as_view(), treasury.info.as_view(), buffer.info.as_view(), delegation_record.info.as_view(),
             delegation_metadata.info.as_view(), ledger.info.as_view(), vault_program.info.as_view(), delegation_program.info.as_view(),
             system_program.info.as_view(),
@@ -222,7 +218,7 @@ impl ScratchCards {
         vault_program: &Account<'a>,
         args: withdraw_house::WithdrawHouse,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<ScratchCards>(
             admin.info.as_view(), house.info.as_view(), house_ledger.info.as_view(), admin_ledger.info.as_view(), vault_program.info.as_view(),
         )?)
     }
@@ -243,7 +239,7 @@ impl ScratchCards {
         token_accounts: &Remaining<'a>,
         args: close_ledger::CloseLedger,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<ScratchCards>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), reserve.info.as_view(), permission.info.as_view(),
             permission_program.info.as_view(), vault_program.info.as_view(), token_program.info.as_view(), system_program.info.as_view(),
             &token_accounts.iter().map(|account| *account.as_view()).collect::<Vec<_>>(),
@@ -259,7 +255,7 @@ impl ScratchCards {
         vault_program: &Account<'a>,
         args: authorize_treasury::AuthorizeTreasury,
     ) -> Result<()> {
-        Ok(args.process(admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view())?)
+        Ok(args.process::<ScratchCards>(admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view())?)
     }
 
     #[instruction(discriminator = 21)]
@@ -279,7 +275,7 @@ impl ScratchCards {
         system_program: &Account<'a>,
         args: set_privacy::SetPrivacy,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<ScratchCards>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), permission.info.as_view(), permission_program.info.as_view(),
             vault_program.info.as_view(), system_program.info.as_view(),
         )?)
@@ -338,9 +334,11 @@ impl ScratchCards {
         admin: &Signer<'a>,
         config: &mut Account<'a>,
         system_program: &Account<'a>,
-        args: grow_config::GrowConfig,
+        args: GrowConfig,
     ) -> Result<()> {
-        Ok(args.process(admin.info.as_view(), config.info.as_view(), system_program.info.as_view())?)
+        Ok(args.process::<ScratchCards, state::config::CardConfig, { state::config::VERSION }>(
+            admin.info.as_view(), config.info.as_view(), system_program.info.as_view(),
+        )?)
     }
 
     /// The vault's settle callback for a sale.
@@ -415,7 +413,7 @@ impl ScratchCards {
         fees_vault: &mut Account<'a>,
         args: undelegate_treasury::UndelegateTreasury,
     ) -> Result<()> {
-        Ok(args.process(
+        Ok(args.process::<ScratchCards>(
             admin.info.as_view(), treasury.info.as_view(), ledger.info.as_view(), vault_program.info.as_view(), magic_program.info.as_view(),
             magic_context.info.as_view(), fees_vault.info.as_view(),
         )?)

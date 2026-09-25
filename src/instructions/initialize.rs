@@ -1,12 +1,12 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::create_permission;
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::ids::PERMISSION_PROGRAM;
+use casino_core::{pda, permission, Casino, CoreError};
 
-use crate::constants::{is_admin, ANALYTICS_READERS, PERMISSION_PROGRAM, TREASURIES, VAULT_PROGRAM};
-use crate::error::GameError;
+use crate::constants::{ANALYTICS_READERS, TREASURIES};
 use crate::state::analytics::{self, Analytics};
 use crate::state::config::{self, Config, INITIAL_CARDS};
-use crate::utils::pda;
+use crate::ScratchCards;
 
 /// Creates `["config"]`, the treasury PDAs and `["analytics"]`, and sets the card count. Admin
 /// only, idempotent. The house is program-owned so it can be delegated to the rollup (it pays
@@ -38,11 +38,9 @@ impl Initialize {
         // One account per `TREASURIES` seed, in order.
         let treasuries: [&AccountInfo; TREASURIES.len()] = [house, jackpot];
 
-        if !initializer.is_signer() || !is_admin(initializer.address()) {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
+        ScratchCards::require_admin(initializer)?;
         if *permission_program.address() != PERMISSION_PROGRAM {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
         let config_bump = pda::validate(program_id, config_account, &[b"config"])?;
 
@@ -101,15 +99,17 @@ impl Initialize {
         // read the live copy. Both programs are members because the rollup admits an instruction that
         // touches a permissioned account only when the *invoked program* is a member — and the
         // settle that writes these counters is a vault instruction, exactly the reason every
-        // ledger's permission names the vault and the game alike. Made once and never rewritten:
-        // an update through the ACL program is not something this program does.
-        let mut members = vec![*program_id, VAULT_PROGRAM];
-        members.extend(ANALYTICS_READERS);
-        let seeds: &[&[u8]] = &[b"analytics", &[analytics_bump]];
-        if permission.data_len() == 0 {
-            create_permission(analytics_account, permission, initializer, system_program, &members, &[seeds])
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-        }
+        // ledger's permission names the vault and the game alike. Created once and never
+        // rewritten: an update drops the owning program and the TEE then refuses the account.
+        permission::set(
+            permission_program,
+            analytics_account,
+            &[b"analytics", &[analytics_bump]],
+            permission,
+            initializer,
+            system_program,
+            permission::members(program_id, &ANALYTICS_READERS),
+        )?;
 
         // Grow a short shelf up to the starting size, never shrink — it may hold live cards. Rent
         // must come with the growth or the resize fails the runtime's exemption check.
@@ -127,7 +127,7 @@ impl Initialize {
             config_account.resize(initial)?;
         }
         if self.card_count as usize > Config::capacity(config_account) {
-            return Err(GameError::ShelfFull.into());
+            return Err(CoreError::ShelfFull.into());
         }
 
         let cfg = Config::load_mut(config_account)?;
@@ -136,7 +136,7 @@ impl Initialize {
         cfg.authority = initializer.address().to_bytes();
         // Like the shelf itself, the count never shrinks: a re-run declaring fewer cards (or
         // zero, the fresh-shelf default) must not orphan cards already published and live.
-        cfg.card_count = cfg.card_count.max(self.card_count as u64);
+        cfg.count = cfg.count.max(self.card_count as u64);
 
         Ok(())
     }

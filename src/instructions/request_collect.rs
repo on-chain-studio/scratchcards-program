@@ -1,10 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, receipt, vault, CoreError};
 
 use crate::error::GameError;
 use crate::state::card::{Card, CardStatus};
 use crate::state::Config;
-use crate::utils::{engine, pda, receipt, vault};
+use crate::utils::engine;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestCollect;
@@ -41,10 +42,10 @@ impl RequestCollect {
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         pda::validate(program_id, jackpot, &[b"jackpot"])?;
         if *house_ledger.address() != vault::ledger(house.address()) {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
-        if *receipt_account.address() != receipt::address(wallet.address()) {
-            return Err(GameError::InvalidPDA.into());
+        if *receipt_account.address() != receipt::address(program_id, wallet.address()) {
+            return Err(CoreError::InvalidPDA.into());
         }
 
         // Nothing about the card is written here. A card is collected when it is *gone* — the
@@ -55,7 +56,7 @@ impl RequestCollect {
         let (card_id, seed) = {
             let card = Card::load(card_account)?;
             if card.user != user.address().to_bytes() {
-                return Err(GameError::Unauthorized.into());
+                return Err(CoreError::Unauthorized.into());
             }
             if card.status != CardStatus::Revealed as u64 {
                 return Err(GameError::NotRevealed.into());
@@ -66,7 +67,7 @@ impl RequestCollect {
 
         let terms = match Card::terms(card_account)? {
             Some(t) => *t,
-            None => *Config::card(config_account, card_id)?,
+            None => *Config::item(config_account, card_id)?,
         };
         let wins = engine::evaluate(&terms, &seed)?;
 
@@ -89,7 +90,7 @@ impl RequestCollect {
         let mut jackpot_paid = 0u64;
         if wins.jackpot {
             if *jackpot_ledger.address() != vault::ledger(jackpot.address()) {
-                return Err(GameError::InvalidPDA.into());
+                return Err(CoreError::InvalidPDA.into());
             }
             let pot = vault::sol_balance(jackpot_ledger)?;
             if pot > 0 {

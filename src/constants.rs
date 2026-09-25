@@ -1,45 +1,29 @@
-use crate::chain::*;
+//! What this program says about itself. Everything else it calls — the vault, MagicBlock, the
+//! VRF — is a property of the chain and lives in `casino_core::ids`, and so do the ops and dev keys
+//! that operate every game on the shelf.
 
-/// The only key allowed to sign admin instructions: the mainnet ops key, which is also the
-/// upgrade authority and so is kept private anyway. The dev key is handled like a hot wallet —
-/// it may read the books (see `ANALYTICS_READERS`) but it must never move or reprice anything.
-pub const ADMIN_PUBKEYS: [Pubkey; 1] = [
-    Pubkey::from_str_const("2wpqngzMS3CUu6LMaL6M3ykgBGPoXRwP4Ps8TLhx5FZH"),
-];
+use casino_core::chain::*;
+use casino_core::ids::{DEV_KEY, OPS_KEY, OPS_ONLY};
+use casino_core::Casino;
+
+use crate::ScratchCards;
+
+/// The house, then the progressive pot. The order is wire format — it is what every treasury
+/// instruction's `which` byte means — so the jackpot is 1 for as long as the program lives.
+pub const TREASURIES: [&[u8]; 2] = [b"house", b"jackpot"];
+
+impl Casino for ScratchCards {
+    const ID: Pubkey = crate::ID;
+    /// The ops key alone signs admin instructions: it is also the upgrade authority and so is
+    /// kept private anyway. The dev key is handled like a hot wallet — it may read the books
+    /// (see `ANALYTICS_READERS`) but it must never move or reprice anything.
+    const ADMINS: &'static [Pubkey] = &OPS_ONLY;
+    const TREASURIES: &'static [&'static [u8]] = &TREASURIES;
+}
 
 /// Who may read the analytics counters on the TEE: the dev key (its token feeds the hosted
 /// analytics watcher) and the ops key.
-pub const ANALYTICS_READERS: [Pubkey; 2] = [
-    Pubkey::from_str_const("691aFvKMnHXrMSgqk6G8izoCbVZTmkrRcu8xCeMKfPh1"),
-    Pubkey::from_str_const("2wpqngzMS3CUu6LMaL6M3ykgBGPoXRwP4Ps8TLhx5FZH"),
-];
-
-pub fn is_admin(key: &Pubkey) -> bool {
-    ADMIN_PUBKEYS.contains(key)
-}
-
-pub const TREASURIES: [&[u8]; 2] = [b"house", b"jackpot"];
-
-pub fn treasury_seed(which: u8) -> Result<&'static [u8], ProgramError> {
-    TREASURIES
-        .get(which as usize)
-        .copied()
-        .ok_or(ProgramError::InvalidInstructionData)
-}
-
-/// The vault program — holds every balance this game ever touches. The game itself holds
-/// no token accounts: it owns a ledger per treasury and pays by `settle`.
-pub const VAULT_PROGRAM: Pubkey = Pubkey::from_str_const("VAULTrDSUBZ8AXL2kGVYE8eKAn7tgWXRPAevNGUsyTV");
-
-/// SPL Token program.
-pub const TOKEN_PROGRAM: Pubkey = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-
-/// MagicBlock's access-control program — permissions gating who may read an account on the TEE.
-pub const PERMISSION_PROGRAM: Pubkey = Pubkey::from_str_const("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
-
-/// MagicBlock VRF program. Callbacks are signed by the scoped identity `["identity", program]`
-/// at the VRF program — `utils::vrf::callback_identity`.
-pub const VRF_PROGRAM: Pubkey = Pubkey::from_str_const("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");
+pub const ANALYTICS_READERS: [Pubkey; 2] = [DEV_KEY, OPS_KEY];
 
 /// The fee share of every card that grows the progressive jackpot, in basis points.
 pub const JACKPOT_SHARE_BP: u64 = 1000;

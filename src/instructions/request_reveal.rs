@@ -1,9 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, vrf, CoreError};
 
-use crate::error::GameError;
 use crate::state::card::{Card, CardStatus};
-use crate::utils::{pda, vrf};
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestReveal;
@@ -32,13 +31,13 @@ impl RequestReveal {
         {
             let card = Card::load_mut(card_account)?;
             if card.user != user.address().to_bytes() {
-                return Err(GameError::Unauthorized.into());
+                return Err(CoreError::Unauthorized.into());
             }
             // `Bought` is the first request; `Requested` is a permissionless re-fire for a dropped VRF
             // callback (free on the ER). First seed wins regardless: `callback_reveal` only writes on
             // `Requested` and flips to `Revealed`, so a later callback can't overwrite it.
             if card.status != CardStatus::Bought as u64 && card.status != CardStatus::Requested as u64 {
-                return Err(GameError::WrongStatus.into());
+                return Err(CoreError::WrongStatus.into());
             }
             card.status = CardStatus::Requested as u64;
         }
@@ -53,6 +52,8 @@ impl RequestReveal {
                 is_signer: false,
                 is_writable: true,
             }],
+            // Nothing rides the callback: a card has one seed, and `callback_reveal` takes only
+            // the first that lands.
             Vec::new(),
             &[b"house", &[house_bump]],
             true,

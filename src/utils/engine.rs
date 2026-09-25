@@ -1,7 +1,7 @@
 //! Adapter onto `scratch-engine`, the crate the client also runs as wasm. The only shape
 //! difference is the mint, which the engine needs only to spot SOL.
 
-use crate::chain::*;
+use casino_core::chain::*;
 
 use crate::state::config::CardConfig;
 

@@ -15,6 +15,21 @@ Scope: `scratch-cards-program/src` (all instructions, state, utils), `engine/src
 > outlive the transaction that creates it, which blocks the whole attack. It is recorded at its
 > real severity below, with the mistake left visible.
 
+> **2026-09-25: the shared code moved to `casino-core`.** The program's local copies of the
+> chain, the vault, receipt, VRF and PDA helpers, MagicBlock, the config shelf's accessors and the
+> admin/treasury instructions (`src/chain.rs`, `src/magicblock.rs`, `src/utils/{pda,vault,receipt,vrf}.rs`,
+> `src/instructions/{delegation,open_ledger,close_ledger,delegate_treasury,undelegate_treasury,
+> authorize_treasury,set_privacy,withdraw_house,grow_config}.rs`, the `Config` impl in
+> `src/state/config.rs`) and the engine's `engine/src/rng.rs` were deleted in favour of the same
+> code in `../casino-core` — `admin::*`, `shelf::Shelf`, `rng`, and so on. The findings below are
+> left as they were written, so their file and line references point at code that now lives
+> there: the admin gates of items 3 and 4 are `Casino::require_admin` in `casino_core::admin`
+> (the ops key alone, `ids::OPS_ONLY`), item 8's seed folding is `casino_core::rng`, and item 10's
+> `Config` accessors are `casino_core::shelf`. No behaviour changed with the move: the scoped VRF
+> identity, the create-once permissions (the analytics one, and each card's private one made in
+> `resolve_purchase`), the pinned CPI targets and the instruction numbers are what the program
+> already had.
+
 Each item below is self-contained — location, what breaks, and what to do — so they can be
 taken in any order. Severity order is the recommended order.
 

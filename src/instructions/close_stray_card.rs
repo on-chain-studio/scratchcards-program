@@ -1,22 +1,23 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::EPHEMERAL_VAULT_ID;
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::magicblock::EPHEMERAL_VAULT_ID;
+use casino_core::{pda, receipt, Casino, CoreError};
 
-use crate::constants::is_admin;
-use crate::error::GameError;
 use crate::state::card::{self, Card};
-use crate::utils::{pda, receipt};
+use crate::ScratchCards;
 
 /// Drops a card of a layout this program no longer reads, by address: cards from before the
 /// current seeds cannot be reached through `close_card`, which derives the address from a user.
 /// Admin only. A card of the current size is refused — a live ticket goes through `close_card`.
+/// This one stays the game's own: what makes a card stray is this program's card layout, which
+/// the shared `close_player_account` knows nothing of.
 /// Accounts: [admin (signer), house, card, ephemeral_vault, magic_program]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CloseStrayCard;
 
 impl CloseStrayCard {
     #[inline(always)]
-    pub fn process<'a>(
+    pub fn process(
         &self,
         admin: &AccountInfo,
         house: &AccountInfo,
@@ -26,11 +27,9 @@ impl CloseStrayCard {
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !admin.is_signer() || !is_admin(admin.address()) {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
+        ScratchCards::require_admin(admin)?;
         if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         if card_account.owner() != program_id {
@@ -41,7 +40,7 @@ impl CloseStrayCard {
             return Err(ProgramError::InvalidAccountData);
         }
         if data.len() == Card::WITH_TERMS {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
         drop(data);
 

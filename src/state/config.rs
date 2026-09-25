@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use crate::chain::*;
+use casino_core::shelf::Shelf;
 
 pub const DISCRIMINATOR: u64 = 1;
 pub const VERSION:       u64 = 2;
@@ -109,20 +109,13 @@ pub struct CardConfig {
     pub pool:   [PoolEntry; MAX_POOL],
 }
 
-/// `["config"]` — the head of the shelf; cards follow it packed end to end, cast by offset.
-#[repr(C)]
-#[derive(Pod, Zeroable, Clone, Copy)]
-pub struct Config {
-    pub discriminator: u64,
-    pub version:       u64,
-    pub authority:     [u8; 32],
-    pub card_count:    u64,
-}
+/// `["config"]` — the shelf: a `casino_core::shelf::Header`, then the CardConfigs it publishes packed
+/// end to end, cast by offset.
+pub type Config = Shelf<CardConfig, VERSION>;
 
 pub const CARD_SIZE: usize = size_of::<CardConfig>();
 
-// Header and card stride must stay multiples of 8, or bytemuck rejects the misaligned slice at runtime.
-const _: () = assert!(size_of::<Config>() % 8 == 0);
+// The card stride must stay a multiple of 8, or bytemuck rejects the misaligned slice at runtime.
 const _: () = assert!(CARD_SIZE % 8 == 0);
 
 // Pin the sizes: a field reordered into a padding hole would change the stride and misread cards.
@@ -164,79 +157,5 @@ impl CardConfig {
             .iter()
             .map(|b| b.count as usize)
             .sum()
-    }
-}
-
-impl Config {
-    pub const HEADER: usize = size_of::<Self>();
-
-    /// Bytes an account needs to hold `cards` of them.
-    pub const fn size_for(cards: usize) -> usize { Self::HEADER + cards * CARD_SIZE }
-
-    /// How many cards this account has room for — its size, not its contents.
-    pub fn capacity(account: &AccountInfo) -> usize {
-        account.data_len().saturating_sub(Self::HEADER) / CARD_SIZE
-    }
-
-    pub fn load<'a>(account: &AccountInfo) -> Result<&'a Self, ProgramError> {
-        let data = account.try_borrow()?;
-        if data.len() < Self::HEADER { return Err(ProgramError::InvalidAccountData); }
-        let s = bytemuck::try_from_bytes::<Self>(&data[..Self::HEADER])
-            .map_err(|_| ProgramError::InvalidAccountData)
-            .map(|r| unsafe { &*(r as *const Self) })?;
-        if s.version != VERSION { return Err(ProgramError::InvalidAccountData); }
-        Ok(s)
-    }
-
-    pub fn load_mut<'a>(account: &AccountInfo) -> Result<&'a mut Self, ProgramError> {
-        let mut data = account.try_borrow_mut_data()?;
-        if data.len() < Self::HEADER { return Err(ProgramError::InvalidAccountData); }
-        // Not version-checked: this is the write path where `Initialize` sets the version. Reads
-        // use `load`, which is strict.
-        bytemuck::try_from_bytes_mut::<Self>(&mut data[..Self::HEADER])
-            .map_err(|_| ProgramError::InvalidAccountData)
-            .map(|r| unsafe { &mut *(r as *mut Self) })
-    }
-
-    /// A published card, for playing — bounded by `card_count`, not capacity.
-    pub fn card<'a>(
-        account: &AccountInfo,
-        card_id: u64,
-    ) -> Result<&'a CardConfig, ProgramError> {
-        if card_id >= Self::load(account)?.card_count {
-            return Err(crate::error::GameError::InvalidCard.into());
-        }
-        Self::slot(account, card_id as usize)
-    }
-
-    /// A slot, for writing — bounded by capacity, since this is how a card gets published.
-    pub fn slot<'a>(
-        account: &AccountInfo,
-        index: usize,
-    ) -> Result<&'a CardConfig, ProgramError> {
-        let (from, to) = Self::span(account, index)?;
-        let data = account.try_borrow()?;
-        bytemuck::try_from_bytes::<CardConfig>(&data[from..to])
-            .map_err(|_| ProgramError::InvalidAccountData)
-            .map(|r| unsafe { &*(r as *const CardConfig) })
-    }
-
-    pub fn slot_mut<'a>(
-        account: &AccountInfo,
-        index: usize,
-    ) -> Result<&'a mut CardConfig, ProgramError> {
-        let (from, to) = Self::span(account, index)?;
-        let mut data = account.try_borrow_mut_data()?;
-        bytemuck::try_from_bytes_mut::<CardConfig>(&mut data[from..to])
-            .map_err(|_| ProgramError::InvalidAccountData)
-            .map(|r| unsafe { &mut *(r as *mut CardConfig) })
-    }
-
-    fn span(account: &AccountInfo, index: usize) -> Result<(usize, usize), ProgramError> {
-        if index >= Self::capacity(account) {
-            return Err(crate::error::GameError::InvalidCard.into());
-        }
-        let from = Self::HEADER + index * CARD_SIZE;
-        Ok((from, from + CARD_SIZE))
     }
 }

@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use crate::chain::*;
+use casino_core::chain::*;
 
 use crate::state::config::CardConfig;
 

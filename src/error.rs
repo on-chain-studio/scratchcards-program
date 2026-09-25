@@ -1,19 +1,15 @@
-use crate::chain::*;
+//! This game's half of the shared `Custom(n)` space. `casino_core::CoreError` owns 1–3, 5–7 and
+//! 9–11; 4 and 8 are left to each game to name, and 12 up are its own (none yet).
+
+use casino_core::chain::*;
 
 #[derive(Debug)]
 #[repr(u32)]
 pub enum GameError {
-    InvalidPDA         = 1,
-    Unauthorized       = 2,
-    AlreadyInitialized = 3,
+    /// No such card on the shelf, or a slot `SetCard` may not write yet.
     InvalidCard        = 4,
-    WrongStatus        = 5,
-    InsufficientFunds  = 6,
-    InvalidMint        = 7,
+    /// The card's seed has not landed yet.
     NotRevealed        = 8,
-    NothingToCollect   = 9,
-    NotPaid            = 10,
-    ShelfFull          = 11,
 }
 
 impl From<GameError> for ProgramError {

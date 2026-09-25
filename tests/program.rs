@@ -1,9 +1,10 @@
-//! The built program, run. `layout.rs` pins what the bytes mean; these check that the deployed
-//! artifact dispatches and refuses exactly as it always has — the same accounts in the same order,
-//! the same errors for the same mistakes. They load `target/deploy/scratch_cards.so`, so they need
-//! `cargo build-sbf` first, and are ignored otherwise:
+//! The built program, run. `layout.rs` pins what the bytes mean; these check that the artifact
+//! that will be deployed dispatches and refuses the way the source says it does — the same
+//! accounts in the same order, the same errors for the same mistakes. They load
+//! `target/deploy/scratch_cards.so`, so they need `cargo build-sbf` first, and are ignored
+//! otherwise:
 //!
-//!     cargo build-sbf && SBF_OUT_DIR=$PWD/target/deploy cargo test --test program -- --ignored
+//!     cargo build-sbf && cargo test --test program -- --ignored
 //!
 //! Point `SBF_OUT_DIR` at another build to run the same checks against it.
 
@@ -14,7 +15,7 @@ use solana_account::Account;
 use solana_instruction::{error::InstructionError, AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 
-use scratch_cards::error::GameError;
+use casino_core::CoreError;
 use scratch_cards::state::card::{self, Card, CardStatus};
 
 fn key(bytes: [u8; 32]) -> Pubkey {
@@ -25,8 +26,9 @@ fn program() -> Pubkey {
     key(scratch_cards::ID.to_bytes())
 }
 
+/// The oracle signs a scoped request's callback as `["identity", program]` at the VRF program.
 fn vrf_identity() -> Pubkey {
-    key(scratch_cards::utils::vrf::callback_identity(&scratch_cards::ID).to_bytes())
+    key(casino_core::vrf::scoped_identity(&scratch_cards::ID).to_bytes())
 }
 
 fn mollusk() -> Mollusk {
@@ -113,7 +115,7 @@ fn a_card_not_waiting_for_the_oracle_is_refused() {
         &table.reveal(vrf_identity(), &[]),
         &[(vrf_identity(), wallet()), (table.card, table.card_account(CardStatus::Revealed))],
     );
-    assert_eq!(result.raw_result, Err(InstructionError::Custom(GameError::WrongStatus as u32)));
+    assert_eq!(result.raw_result, Err(InstructionError::Custom(CoreError::WrongStatus as u32)));
 }
 
 #[test]
@@ -177,7 +179,7 @@ fn numbers_past_the_list_are_invalid_data() {
 
 fn jackpot() -> (Pubkey, Pubkey) {
     let (jackpot, _) = Pubkey::find_program_address(&[b"jackpot"], &program());
-    let vault = key(scratch_cards::constants::VAULT_PROGRAM.to_bytes());
+    let vault = key(casino_core::ids::VAULT_PROGRAM.to_bytes());
     let (ledger, _) = Pubkey::find_program_address(&[b"ledger", jackpot.as_ref()], &vault);
     (jackpot, ledger)
 }
@@ -186,7 +188,7 @@ fn ledger_holding(lamports: u64) -> Account {
     // The vault's layout: a 116-byte header, then slot 0 — the SOL mint, then its amount.
     let mut data = vec![0u8; 116 + 32 + 8];
     data[148..156].copy_from_slice(&lamports.to_le_bytes());
-    let vault = key(scratch_cards::constants::VAULT_PROGRAM.to_bytes());
+    let vault = key(casino_core::ids::VAULT_PROGRAM.to_bytes());
     Account { lamports: 1_000_000, data, owner: vault, executable: false, rent_epoch: 0 }
 }
 
@@ -219,5 +221,5 @@ fn another_ledger_is_not_the_pot() {
         &read_jackpot(jackpot, other),
         &[(jackpot, Account::new(1_000_000, 0, &program())), (other, ledger_holding(1))],
     );
-    assert_eq!(result.raw_result, Err(InstructionError::Custom(GameError::InvalidPDA as u32)));
+    assert_eq!(result.raw_result, Err(InstructionError::Custom(CoreError::InvalidPDA as u32)));
 }

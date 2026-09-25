@@ -1,11 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::EPHEMERAL_VAULT_ID;
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::magicblock::EPHEMERAL_VAULT_ID;
+use casino_core::{pda, receipt, CoreError};
 
-use crate::error::GameError;
 use crate::state::analytics::Analytics;
 use crate::state::card::{Card, CardStatus};
-use crate::utils::{engine, pda, receipt};
+use crate::utils::engine;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolveCollect {
@@ -31,7 +31,7 @@ impl ResolveCollect {
         let program_id = &crate::ID;
 
         if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
 
@@ -41,13 +41,13 @@ impl ResolveCollect {
         let (card_id, seed) = {
             let card = Card::load_mut(card_account)?;
             if card.user != self.human.to_bytes() {
-                return Err(GameError::Unauthorized.into());
+                return Err(CoreError::Unauthorized.into());
             }
             // Still `Revealed`: there is no collected state to reach. The card's existence *is*
             // the unpaid flag, and this callback ends by closing it — so a second settle in the
             // same slot finds no account to load and dies before it can pay twice.
             if card.status != CardStatus::Revealed as u64 {
-                return Err(GameError::WrongStatus.into());
+                return Err(CoreError::WrongStatus.into());
             }
             (card.card_id, card.seed)
         };
@@ -61,16 +61,16 @@ impl ResolveCollect {
             let wins = engine::evaluate(terms, &seed)?;
             for (i, amount) in wins.amounts.iter().enumerate() {
                 if *amount > 0 {
-                    a.record_payout(&terms.pool[i].mint, *amount);
+                    casino_core::analytics::record_payout(&mut a.payouts, &terms.pool[i].mint, *amount);
                 }
             }
         }
         if self.jackpot_paid > 0 {
             a.jackpot_paid = a.jackpot_paid.saturating_add(self.jackpot_paid);
-            Analytics::count(&mut a.jackpot_hits);
+            casino_core::analytics::count(&mut a.jackpot_hits);
         }
         if let Some(slot) = a.cards_collected.get_mut(card_id as usize) {
-            Analytics::count(slot);
+            casino_core::analytics::count(slot);
         }
 
         receipt::close(magic_program, house, card_account, ephemeral_vault, house_bump)
