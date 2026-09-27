@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 
 /**
  * The treasury per token: what the house can still pay at settle, what the vault can still
- * pay at withdraw, what has been paid over the game's lifetime, and how many worst-case
- * wins the house balance covers. The keeper restocks at 5× worst — below that is LOW,
+ * pay at withdraw, and how many worst-case wins the house balance covers. The keeper restocks at 5× worst — below that is LOW,
  * below 1× a single top prize cannot be paid.
  */
 
@@ -12,7 +11,6 @@ type Balances = {
   ok: boolean; error?: string; where?: string
   sol: TokenBal; tokens: Record<string, TokenBal>
 }
-type Payout = { token: string; whole: number }
 type Cluster = 'mainnet' | 'devnet'
 
 const fmtVal = (n: number) =>
@@ -23,7 +21,6 @@ export function TreasuryView() {
   const [cluster, setCluster] = useState<Cluster>('mainnet')
   const [bal, setBal] = useState<Balances | null>(null)
   const [nonce, setNonce] = useState(0)
-  const [payouts, setPayouts] = useState<Payout[]>([])
 
   useEffect(() => {
     setBal(null)
@@ -32,18 +29,7 @@ export function TreasuryView() {
       .catch(e => setBal({ ok: false, error: String(e) } as Balances))
   }, [cluster, nonce])
 
-  // The lifetime paid-out column rides the same stream the analytics tiles use.
-  useEffect(() => {
-    setPayouts([])
-    const es = new EventSource(`/__sheet/analytics/stream?cluster=${cluster}`)
-    es.onmessage = ev => {
-      try { setPayouts(JSON.parse(ev.data).payouts ?? []) } catch { /* not a state line */ }
-    }
-    return () => es.close()
-  }, [cluster])
-
   if (bal && !bal.ok) return <div className="banner"><strong>Treasury unavailable</strong><span>{bal.error}</span></div>
-  const paidOf = (t: string) => payouts.find(p => p.token === t)?.whole ?? 0
   const rows = bal ? [
     ['SOL', bal.sol] as const,
     ...Object.entries(bal.tokens).sort(([a], [b]) => a.localeCompare(b)),
@@ -73,7 +59,7 @@ export function TreasuryView() {
         <table>
           <thead><tr>
             <th>token</th><th>house (pays wins)</th><th>pool (pays withdrawals)</th>
-            <th>paid out</th><th>worst collect</th><th>coverage</th>
+            <th>worst collect</th><th>coverage</th>
           </tr></thead>
           <tbody>
             {rows.map(([sym, r]) => (
@@ -83,12 +69,11 @@ export function TreasuryView() {
                   {fmtVal(r.house)}{r.price ? ` ($${(r.house * r.price).toFixed(2)})` : ''}
                 </td>
                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtVal(r.pool)}</td>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtVal(paidOf(sym)) || '—'}</td>
                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{r.worst ? fmtVal(r.worst) : '—'}</td>
                 <td>{badge(r) ?? '—'}</td>
               </tr>
             ))}
-            {!rows.length && <tr><td colSpan={6} className="note">loading treasury…</td></tr>}
+            {!rows.length && <tr><td colSpan={5} className="note">loading treasury…</td></tr>}
             {rows.length > 0 && (() => {
               const usd = (f: (r: TokenBal, sym: string) => number) =>
                 rows.reduce((n, [sym, r]) => n + f(r, sym) * r.price, 0)
@@ -100,7 +85,6 @@ export function TreasuryView() {
                   <td style={{ fontWeight: 600 }}>Total</td>
                   {cell(usd(r => r.house))}
                   {cell(usd(r => r.pool))}
-                  {cell(usd((_, sym) => paidOf(sym)))}
                   <td /><td />
                 </tr>
               )

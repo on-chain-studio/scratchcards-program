@@ -13,7 +13,6 @@ import { BlockTable, PayTable } from './ui/Editors'
 import { fmt, usd, pct } from './ui/format'
 import { NumberField } from './ui/Weight'
 import { BandChart } from './ui/Charts'
-import { AnalyticsView } from './ui/AnalyticsView'
 import { TreasuryView } from './ui/TreasuryView'
 import { RangeSlider } from './ui/RangeSlider'
 
@@ -53,7 +52,7 @@ export function App() {
   const [asJson, setAsJson] = useState(false)
   const [copied, setCopied] = useState(false)
   const [design, setDesign] = useState<Design>(() => readDesign() ?? DESIGN)
-  const [view, setView] = useState<'cards' | 'analytics' | 'treasury'>('cards')
+  const [view, setView] = useState<'cards' | 'treasury'>('cards')
 
   // The design (min/max/bend per card) is part of the draft too: it feeds every rebalance,
   // so a slider twitch that only touched the browser copy must show as unsaved, not hide in
@@ -394,11 +393,6 @@ export function App() {
               {c.name}
             </button>
           ))}
-          <button className="tab" role="tab" aria-selected={view === 'analytics'}
-            onClick={() => setView('analytics')}
-            title="the deployed game's counters — live tiles and the recorded history, graphed">
-            Analytics
-          </button>
           <button className="tab" role="tab" aria-selected={view === 'treasury'}
             onClick={() => setView('treasury')}
             title="house and pool balances per token, against the sheet's worst single collect">
@@ -455,10 +449,6 @@ export function App() {
             </button>
           </span>
         </div>
-      )}
-
-      {view === 'analytics' && (
-        <AnalyticsView cardNames={cards.map(c => c.name)} solUsd={PRICES.SOL ?? 0} prices={PRICES} />
       )}
 
       {view === 'treasury' && <TreasuryView />}
