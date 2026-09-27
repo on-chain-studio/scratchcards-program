@@ -143,7 +143,7 @@ enum Command {
     /// Tops the house up to cover the worst single collect of every token, times a factor.
     TopUp {
         /// The float, as a multiple of the worst case.
-        #[arg(long, default_value_t = 5.0)]
+        #[arg(long, default_value_t = 1.5)]
         factor: f64,
         /// Refill anything below target, not only below half of it.
         #[arg(long)]

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 
 /**
  * The treasury per token: what the house can still pay at settle, what the vault can still
- * pay at withdraw, and how many worst-case wins the house balance covers. The keeper restocks at 5× worst — below that is LOW,
- * below 1× a single top prize cannot be paid.
+ * pay at withdraw, and how many worst-case wins the house balance covers. The keeper restocks
+ * at 1.5× worst — below that is LOW, below 1× a single top prize cannot be paid.
  */
 
 type TokenBal = { house: number; pool: number; worst: number; price: number }
@@ -38,7 +38,7 @@ export function TreasuryView() {
     if (!r.worst) return null
     const x = r.house / r.worst
     const [label, color] = x < 1 ? ['SHORT', 'var(--danger, #d33)']
-      : x < 5 ? ['LOW', 'var(--warn, #c80)'] : ['OK', 'var(--ok, #2a7)']
+      : x < 1.5 ? ['LOW', 'var(--warn, #c80)'] : ['OK', 'var(--ok, #2a7)']
     return <span style={{ color, fontWeight: 600 }}>{label} {x.toFixed(1)}×</span>
   }
 

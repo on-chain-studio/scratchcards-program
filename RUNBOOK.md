@@ -105,21 +105,19 @@ copy for a card id, so those two deletions are the whole job.
 ## Keeping the house solvent
 
 The house must be able to pay the worst single collect of every token on the sheet.
-Policy is a float of exactly ×1.0 of that worst case.
+Policy is a float of ×1.5 of that worst case, the default of both commands below.
 
 ```
 scratch-ops ledger house --mainnet                        # what the house holds
-scratch-ops top-up --mainnet --factor 1 --fill --check    # what it needs
+scratch-ops top-up --mainnet --fill --check    # what it needs
 
-scratch-ops acquire-float --mainnet --factor 1            # plan the SOL → token swaps
-scratch-ops acquire-float --mainnet --factor 1 --swap     # execute them
-scratch-ops top-up --mainnet --factor 1 --fill            # move them into the house
+scratch-ops acquire-float --mainnet            # plan the SOL → token swaps
+scratch-ops acquire-float --mainnet --swap     # execute them
+scratch-ops top-up --mainnet --fill            # move them into the house
 ```
 
-Two flags are load-bearing:
+One flag is load-bearing:
 
-- **`--factor 1`** on both commands. They default to 1.5 and 5 respectively, which would
-  buy several times the intended float.
 - **`--fill`** on `top-up`. Its default refills only below *half* target — right for
   routine drift, wrong straight after `acquire-float`, which buys the exact shortfall
   to full target. Without `--fill` the tokens you just bought stay stranded in the
