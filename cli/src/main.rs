@@ -137,6 +137,9 @@ enum Command {
         #[arg(long)]
         watch: bool,
     },
+    /// The treasury per token as one JSON line, for the sheet tool: house ledger, vault reserve,
+    /// worst single collect.
+    Balances,
     /// Tops the house up to cover the worst single collect of every token, times a factor.
     TopUp {
         /// The float, as a multiple of the worst case.
@@ -535,6 +538,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Analytics { json, watch } => show_analytics(&chain, json, watch).await,
+        Command::Balances => float::balances(&chain).await,
         Command::TopUp { factor, fill, check } => float::top_up(&chain, factor, fill, check).await,
         Command::AcquireFloat { factor, slippage, swap } => float::acquire_float(&chain, factor, slippage, swap).await,
         Command::FetchPrices => prices::fetch(&chain.http).await,

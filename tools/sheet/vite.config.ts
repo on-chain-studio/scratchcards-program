@@ -45,13 +45,13 @@ function sheetIO(): Plugin {
         res.setHeader('content-type', 'application/json')
         const hit = balancesCache[cluster]
         if (!q.get('fresh') && hit && Date.now() - hit.t < 30_000) return res.end(hit.body)
-        const args = ['scripts/_balances-json.mjs', ...(cluster === 'mainnet' ? ['--mainnet'] : [])]
-        execFile('node', args, { cwd: repo, timeout: 60_000 }, (err, stdout) => {
+        const args = ops(['balances', ...(cluster === 'mainnet' ? ['--mainnet'] : [])])
+        execFile('cargo', args, { cwd: repo, timeout: 600_000 }, (err, stdout, stderr) => {
           const line = String(stdout).trim().split('\n').reverse()
             .find(l => { try { JSON.parse(l); return true } catch { return false } })
           if (!line) {
             res.statusCode = 500
-            return res.end(JSON.stringify({ ok: false, error: String(err ?? 'no output') }))
+            return res.end(JSON.stringify({ ok: false, error: String(stderr || err || 'no output').trim().slice(-2000) }))
           }
           balancesCache[cluster] = { t: Date.now(), body: line }
           res.end(line)
@@ -74,9 +74,8 @@ function sheetIO(): Plugin {
             res.setHeader('content-type', 'application/json')
             return res.end(JSON.stringify({ ok: false, error: 'cluster must be mainnet or devnet' }))
           }
-          const args = ['scripts/setup-devnet.mjs', '--cards-only']
-          if (cluster === 'mainnet') args.push('--mainnet')
-          execFile('node', args, { cwd: repo, timeout: 600_000 }, (err: any, stdout: any, stderr: any) => {
+          const args = ops(['publish', '--cards-only', ...(cluster === 'mainnet' ? ['--mainnet'] : [])])
+          execFile('cargo', args, { cwd: repo, timeout: 600_000 }, (err: any, stdout: any, stderr: any) => {
             res.setHeader('content-type', 'application/json')
             if (err) {
               res.statusCode = 500

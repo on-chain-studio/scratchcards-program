@@ -14,7 +14,8 @@ use base64::Engine;
 use casino_core::ids::TOKEN_PROGRAM;
 use casino_ops::ops::Deposit;
 use casino_ops::vault::{self, Ledger};
-use casino_ops::{sol, Chain, Instruction, Ops, Pubkey, Signer};
+use casino_ops::chain::Place;
+use casino_ops::{sol, Chain, Instruction, Ops, Pubkey, Signer, Treasury};
 use serde_json::{json, Value};
 use solana_sdk::transaction::VersionedTransaction;
 
@@ -67,12 +68,14 @@ async fn token_program(chain: &Chain, mint: &Pubkey) -> Result<Pubkey> {
     Ok(chain.account(mint).await?.map(|a| a.owner).unwrap_or(TOKEN_PROGRAM))
 }
 
-async fn token_balance(chain: &Chain, owner: &Pubkey, mint: &Pubkey, program: &Pubkey) -> u128 {
-    let account = vault::token_account(owner, mint, program);
-    match chain.base.connection.get_token_account_balance(&account).await {
-        Ok(balance) => balance.amount.parse().unwrap_or(0),
-        Err(_) => 0,
-    }
+/// A token account's amount, read from the account itself: `getTokenAccountBalance` is an indexed
+/// call some public RPCs refuse. No account holds nothing.
+async fn token_amount(chain: &Chain, owner: &Pubkey, mint: &Pubkey, program: &Pubkey) -> Result<u128> {
+    let Some(account) = chain.account(&vault::token_account(owner, mint, program)).await? else {
+        return Ok(0);
+    };
+    let amount = account.data.get(64..72).context("not a token account")?;
+    Ok(u64::from_le_bytes(amount.try_into()?) as u128)
 }
 
 pub async fn top_up(chain: &Chain, factor: f64, fill: bool, check: bool) -> Result<()> {
@@ -133,7 +136,7 @@ pub async fn top_up(chain: &Chain, factor: f64, fill: bool, check: bool) -> Resu
             vault::create_token_account(&admin, &vault::reserve(), &mint, &program),
         ];
         if mainnet {
-            let available = token_balance(chain, &admin, &mint, &program).await;
+            let available = token_amount(chain, &admin, &mint, &program).await?;
             if available < amount as u128 {
                 println!("  {symbol}: SHORT — the admin holds {available}, needs {amount}; acquire it and run again");
                 continue;
@@ -159,6 +162,45 @@ pub async fn top_up(chain: &Chain, factor: f64, fill: bool, check: bool) -> Resu
     }
     println!("\nthis run cost {} SOL in fees and rent", sol(before.saturating_sub(chain.balance(&admin).await?)));
     println!("(the admin ledger stays where the house is; the next run brings it home itself)");
+    Ok(())
+}
+
+/// The treasury per token as one JSON line, for the sheet tool: what the house ledger holds (it
+/// pays wins at settle), what the vault's reserve holds on basenet (it pays withdrawals), and the
+/// worst single collect — the same worst case `top-up` sizes the float against.
+pub async fn balances(chain: &Chain) -> Result<()> {
+    let mints = Mints::load(chain.net.mainnet)?;
+    let prices = Prices::load()?;
+    let worst = worst_cases(&cards_on_chain(chain).await?, &mints);
+    let live = chain.live(&Treasury::house::<ScratchCards>().ledger, &chain.admin).await?;
+    if live.stale {
+        bail!("the house ledger is on a rollup and could not be read there");
+    }
+    let place = if matches!(live.place, Place::Delegated(_)) { "rollup (live)" } else { "basenet" };
+    let house = live.account.and_then(|a| Ledger::decode(&a.data))
+        .unwrap_or(Ledger { owner: Pubkey::default(), sol: 0, balances: vec![] });
+    let reserve = vault::reserve();
+    let row = |symbol: &str, house: u128, pool: u128| {
+        json!({
+            "house": prices.whole(symbol, house as u64),
+            "pool": prices.whole(symbol, pool as u64),
+            "worst": prices.whole(symbol, worst.get(symbol).copied().unwrap_or(0) as u64),
+            "price": prices.usd.get(symbol).copied().unwrap_or(0.0),
+        })
+    };
+
+    let sol_row = row("SOL", held(&house, &mints, "SOL"), chain.balance(&reserve).await? as u128);
+    let mut tokens = serde_json::Map::new();
+    let symbols: std::collections::BTreeSet<&String> = mints.0.keys().chain(worst.keys()).collect();
+    for symbol in symbols.into_iter().filter(|s| *s != "SOL") {
+        let mint = mints.mint(symbol)?;
+        let program = token_program(chain, &mint).await?;
+        let (held, pool) = (held(&house, &mints, symbol), token_amount(chain, &reserve, &mint, &program).await?);
+        if held > 0 || pool > 0 || worst.contains_key(symbol) {
+            tokens.insert(symbol.clone(), row(symbol, held, pool));
+        }
+    }
+    println!("{}", json!({ "ok": true, "where": place, "sol": sol_row, "tokens": tokens }));
     Ok(())
 }
 
@@ -213,7 +255,7 @@ pub async fn acquire_float(chain: &Chain, factor: f64, slippage_bps: u32, swap: 
         let Ok(mint) = mints.mint(symbol) else { continue };
         let in_house = held(&house, &mints, symbol);
         let program = token_program(chain, &mint).await?;
-        let in_wallet = token_balance(chain, &admin, &mint, &program).await;
+        let in_wallet = token_amount(chain, &admin, &mint, &program).await?;
         // The same rounding `top-up` applies, or the wallet ends one rounding step short of what
         // `top-up` then asks for.
         let need = round_up(target(*worst, factor).saturating_sub(in_house)).saturating_sub(in_wallet);
@@ -294,7 +336,7 @@ pub async fn acquire_float(chain: &Chain, factor: f64, slippage_bps: u32, swap: 
         let signed = VersionedTransaction::try_new(unsigned.message, &[&chain.admin])?;
         let signature = chain.base.connection.send_and_confirm_transaction(&signed).await?;
         let program = token_program(chain, &buy.mint).await?;
-        let now = token_balance(chain, &admin, &buy.mint, &program).await;
+        let now = token_amount(chain, &admin, &buy.mint, &program).await?;
         println!("  ✅ {:<7} {}  the wallet now holds {now}", buy.symbol, casino_ops::short(signature));
     }
     println!("\nthis run cost {} SOL (swaps included)", sol(before.saturating_sub(chain.balance(&admin).await?)));
