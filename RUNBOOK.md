@@ -4,9 +4,19 @@ How the live game is operated: changing the card sheet, publishing it, keeping t
 house solvent, and shipping the app. `README.md` explains what the program *is*; this
 explains what you *do*.
 
-Every script takes `--mainnet`. Without it you are on devnet. The flag also picks who
-signs and pays: devnet uses the dark-galaxy dev key, mainnet uses `~/casino_admin.json`
-(`scripts/net.mjs`, `ADMIN_PATH`). Mainnet runs print a `■ MAINNET — real funds` banner.
+Everything here is `scratch-ops`, the operator CLI in `cli/` — `cargo run -- <command>` from
+there, or the built `cli/target/debug/scratch-ops`. Every command takes `--mainnet`; without it
+you are on devnet, and mainnet runs print a `■ MAINNET — real funds` banner. Whoever signs and
+pays is `--keypair`, else `$CASINO_ADMIN_KEYPAIR`, else the Solana CLI's own key. The rollup is
+the TEE unless `--public` names the public ER.
+
+Scratch cards' admin is the ops key alone, on both clusters: `setup`, `publish`, `close-card`,
+`close-stray-cards --go` and the ledger and treasury commands need
+`--keypair ~/keys/casino_admin.json` (the shared keys folder; `$CASINO_ADMIN_KEYPAIR` works as
+well), and `scratch-ops` refuses its own admin commands from any other key before the program
+does. The dev key is handled like a hot wallet: it may read the analytics on the TEE — it is one
+of the analytics permission's readers — but never move or reprice anything. `play`, `card`,
+`cards`, `verify` and `status` take any key.
 
 ---
 
@@ -20,7 +30,7 @@ is not the workflow.
 cd tools/sheet && npx vite          # http://localhost:5180
 ```
 
-1. **Update prices** (button, or `node scripts/fetch-prices.mjs`) — re-reads token
+1. **Update prices** (button, or `scratch-ops fetch-prices`) — re-reads token
    prices. Prizes do not move yet.
 2. **Rebalance all** — re-solves every card at the new prices and re-prints the sheet.
 3. **Save** — writes `cards.json` and `design.json`.
@@ -62,19 +72,22 @@ Consequences worth knowing before you tune:
 Devnet first, always. Both clusters run the same sheet.
 
 ```
-node scripts/setup-devnet.mjs --cards-only              # publish to devnet
-node scripts/_verify-sheet.mjs                          # must say: chain matches the sheet exactly
-ROLLUP=tee node scripts/play-devnet.mjs 3               # buy/reveal/collect 3 real cards
+scratch-ops publish --cards-only              # publish to devnet
+scratch-ops verify                            # must say: chain matches the sheet exactly
+scratch-ops play 3                            # buy/reveal/collect 3 real cards on the TEE
 
-node scripts/setup-devnet.mjs --cards-only --mainnet    # publish to mainnet
-node scripts/_verify-sheet.mjs --mainnet
+scratch-ops publish --cards-only --mainnet    # publish to mainnet
+scratch-ops verify --mainnet
 ```
 
-`_verify-sheet` decodes every field of every on-chain card and compares it to the
-sheet — it is the only thing that proves a publish landed, so never skip it.
+`verify` decodes every field of every on-chain card and compares it to the sheet — it is
+the only thing that proves a publish landed, so never skip it. `publish` skips a card
+already on chain byte for byte (`--force` rewrites it anyway).
 
-`play-devnet.mjs` plays as the dev key against a ledger that persists between runs;
-`--close` undelegates, withdraws and closes it to reclaim the funds.
+`play` plays as the admin key (or `--wallet <keypair>`) against a ledger that persists
+between runs, with a session key the vault authorizes for the run — the app's own path;
+`--close` undelegates, withdraws and closes the ledger to reclaim the funds. A card an
+earlier run left mid-flow is finished first (`scratch-ops finish` does only that).
 
 ### Retiring or adding a card
 
@@ -95,17 +108,17 @@ The house must be able to pay the worst single collect of every token on the she
 Policy is a float of exactly ×1.0 of that worst case.
 
 ```
-node scripts/_house-balances.mjs --mainnet                    # what the house holds
-node scripts/top-up.mjs --mainnet --factor 1 --fill --check   # what it needs
+scratch-ops ledger house --mainnet                        # what the house holds
+scratch-ops top-up --mainnet --factor 1 --fill --check    # what it needs
 
-node scripts/acquire-float.mjs --mainnet --factor 1           # plan the SOL → token swaps
-node scripts/acquire-float.mjs --mainnet --factor 1 --swap    # execute them
-node scripts/top-up.mjs --mainnet --factor 1 --fill           # move them into the house
+scratch-ops acquire-float --mainnet --factor 1            # plan the SOL → token swaps
+scratch-ops acquire-float --mainnet --factor 1 --swap     # execute them
+scratch-ops top-up --mainnet --factor 1 --fill            # move them into the house
 ```
 
 Two flags are load-bearing:
 
-- **`--factor 1`** on both scripts. They default to 1.5 and 5 respectively, which would
+- **`--factor 1`** on both commands. They default to 1.5 and 5 respectively, which would
   buy several times the intended float.
 - **`--fill`** on `top-up`. Its default refills only below *half* target — right for
   routine drift, wrong straight after `acquire-float`, which buys the exact shortfall
@@ -142,5 +155,17 @@ jackpots) and graphs a chosen time range. History is recorded only while that de
 is running — the chain holds lifetime totals, not a time series.
 
 ```
-node scripts/_analytics.mjs --mainnet     # same counters, one shot
+scratch-ops analytics --mainnet     # same counters, one shot (--json for a machine)
 ```
+
+The tab's recorder is `scratch-ops analytics --watch`, which the dev server runs through cargo.
+
+---
+
+## Stray cards
+
+Cards from before the current card layout sit on the rollup at addresses `close-card` cannot
+derive from a player. `scratch-ops close-stray-cards` lists every card account the admin can see
+there, marking each current-layout card as live; `--go` closes the strays by address through
+`close_stray_card` (31), their rent going back to the house. The program refuses a card of the
+current size, so a live ticket is never touched.

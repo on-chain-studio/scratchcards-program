@@ -1,5 +1,5 @@
 {
-  "_note": "Written by fetch-prices.mjs — run that rather than editing by hand, then re-run tools/sheet/rebalance.ts, because every amount on the sheet is set against these. Top level is USD per whole token; _decimals and _mints come from the mainnet mint accounts, _mcap and _volume are how liquid a payout token is.",
+  "_note": "Written by scratch-ops fetch-prices — run that rather than editing by hand, then re-run tools/sheet/rebalance.ts, because every amount on the sheet is set against these. Top level is USD per whole token; _decimals and _mints come from the mainnet mint accounts, _mcap and _volume are how liquid a payout token is.",
   "_fetched": "2026-09-25T13:37:00.904Z",
   "SOL": 119.8,
   "BONK": 0.00000368,

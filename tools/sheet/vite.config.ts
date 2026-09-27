@@ -5,6 +5,8 @@ import { writeFileSync, readFileSync, appendFileSync, existsSync } from 'node:fs
 import { execFile } from 'node:child_process'
 
 const repo = resolve(__dirname, '../..')
+/** The operator CLI (`cli/`, `scratch-ops`), run through cargo so it is built on first use. */
+const ops = (args: string[]) => ['run', '--quiet', '--manifest-path', resolve(repo, 'cli/Cargo.toml'), '--', ...args]
 const SHEET = resolve(__dirname, 'cards.json')
 const DESIGN = resolve(__dirname, 'design.json')
 
@@ -52,8 +54,8 @@ function sheetIO(): Plugin {
           const lines = readFileSync(historyFile(cluster), 'utf8').trim().split('\n')
           lastRecorded[cluster] = lines.length ? stripT(lines[lines.length - 1]) : undefined
         }
-        const args = ['scripts/_analytics-stream.mjs', ...(cluster === 'mainnet' ? ['--mainnet'] : [])]
-        const rec: Rec = { child: execFile('node', args, { cwd: repo }), listeners: new Set() }
+        const args = ops(['analytics', '--watch', ...(cluster === 'mainnet' ? ['--mainnet'] : [])])
+        const rec: Rec = { child: execFile('cargo', args, { cwd: repo }), listeners: new Set() }
         let buf = ''
         rec.child.stdout?.on('data', (chunk: any) => {
           buf += String(chunk)
@@ -62,7 +64,7 @@ function sheetIO(): Plugin {
             const line = buf.slice(0, nl).trim()
             buf = buf.slice(nl + 1)
             if (!line) continue
-            // Only state lines travel: the child also prints banners (net.mjs), and a non-JSON
+            // Only state lines travel: the child may print other lines too, and a non-JSON
             // line broadcast as SSE would crash every listening tab's parser.
             let state
             try { state = JSON.parse(line) } catch { continue }
@@ -136,7 +138,6 @@ function sheetIO(): Plugin {
         })
       })
 
-      // Re-pull token prices: runs scripts/fetch-prices.mjs and returns the fresh prices.json.
       /** Publishes the sheet on disk to a cluster's card shelf. Writes the live prize table. */
       server.middlewares.use('/__sheet/publish', (req: any, res: any) => {
         if (req.method !== 'POST') {
@@ -166,12 +167,14 @@ function sheetIO(): Plugin {
         })
       })
 
+      // Re-pull token prices: runs `scratch-ops fetch-prices` and returns the fresh prices.json.
       server.middlewares.use('/__sheet/prices', (req: any, res: any) => {
         if (req.method !== 'POST') {
           res.statusCode = 405
           return res.end()
         }
-        execFile('node', ['scripts/fetch-prices.mjs'], { cwd: repo, timeout: 120_000 }, (err, stdout, stderr) => {
+        // Generous: the first run builds the CLI.
+        execFile('cargo', ops(['fetch-prices']), { cwd: repo, timeout: 600_000 }, (err, stdout, stderr) => {
           res.setHeader('content-type', 'application/json')
           if (err) {
             res.statusCode = 500

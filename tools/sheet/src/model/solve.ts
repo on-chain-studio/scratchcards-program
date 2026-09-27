@@ -2,8 +2,8 @@ import { Card, TOTAL, LINEAR, TARGET_RTP, decimalsOf, normalize } from './types'
 import { Prices } from './analytics'
 
 /**
- * The nearest round number a prize would sensibly be printed as — the same steps
- * `scripts/sheet.mjs` snaps to, so both agree on what "round" means.
+ * The nearest round number a prize would sensibly be printed as: a payout of 4713 BONK reads
+ * like a rounding error, 5000 reads like a prize.
  */
 export function nice(units: number, token: string): number {
   if (units <= 0) return 0

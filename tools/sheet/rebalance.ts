@@ -42,7 +42,7 @@ const MAX_PRICE_AGE_HOURS = 6
 if (ageHours > MAX_PRICE_AGE_HOURS) {
   console.error(
     `prices are ${isFinite(ageHours) ? `${ageHours.toFixed(1)}h` : 'of unknown age'} old — ` +
-    `run scripts/fetch-prices.mjs first (max ${MAX_PRICE_AGE_HOURS}h)`,
+    `run scratch-ops fetch-prices first (max ${MAX_PRICE_AGE_HOURS}h)`,
   )
   process.exit(1)
 }
@@ -109,5 +109,5 @@ if (!apply) {
   console.log('report only — pass --apply to write cards.json')
 } else {
   writeFileSync(CARDS, `${JSON.stringify(next, null, 2)}\n`)
-  console.log('wrote cards.json — publish with: node scripts/setup-devnet.mjs --cards-only (add --mainnet for the real chain)')
+  console.log('wrote cards.json — publish with: scratch-ops publish --cards-only (add --mainnet for the real chain)')
 }

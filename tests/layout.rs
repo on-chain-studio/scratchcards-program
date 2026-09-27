@@ -11,7 +11,8 @@ fn layout_matches_the_deployed_account() {
 
 #[test]
 fn analytics_counters_sit_where_readers_expect() {
-    use scratch_cards::state::analytics::{Analytics, PayoutRow, CARD_SLOTS, TOKEN_SLOTS};
+    use casino_core::analytics::PayoutRow;
+    use scratch_cards::state::analytics::{Analytics, CARD_SLOTS, TOKEN_SLOTS};
     use std::mem::offset_of;
     // Off-chain readers decode this account by offset; a moved field reads as a plausible
     // wrong number, not an error.
@@ -126,4 +127,40 @@ mod wire {
         };
         assert_eq!(reveal.args.randomness, [5; 32]);
     }
+}
+
+#[test]
+fn the_game_s_error_codes_stay_off_the_shared_ones() {
+    // The Custom(n) space is shared with casino-core: a code both halves claim decodes as the
+    // wrong reason. 4 is the exception by design — `InvalidCard` is this game's name for the
+    // shelf's `NotOnShelf`, so the two agree on what it means.
+    use casino_core::CoreError;
+    use scratch_cards::error::GameError;
+    assert_eq!(GameError::InvalidCard as u32, CoreError::NotOnShelf as u32);
+    let theirs = [
+        CoreError::InvalidPDA as u32,
+        CoreError::Unauthorized as u32,
+        CoreError::AlreadyInitialized as u32,
+        CoreError::WrongStatus as u32,
+        CoreError::InsufficientFunds as u32,
+        CoreError::InvalidMint as u32,
+        CoreError::NothingToCollect as u32,
+        CoreError::NotPaid as u32,
+        CoreError::ShelfFull as u32,
+    ];
+    assert!(!theirs.contains(&(GameError::NotRevealed as u32)), "8 is claimed by both halves");
+}
+
+#[test]
+fn the_ops_key_alone_is_admin_and_the_dev_key_only_reads() {
+    // The dev key is handled like a hot wallet: it reads the books but must never move or reprice
+    // anything. casino-core's default admin set is both keys, so this game overriding it is what
+    // keeps the dev key out.
+    use casino_core::ids::{DEV_KEY, OPS_KEY};
+    use casino_core::Casino;
+    use scratch_cards::constants::ANALYTICS_READERS;
+    use scratch_cards::ScratchCards;
+    assert_eq!(<ScratchCards as Casino>::ADMINS, &[OPS_KEY]);
+    assert!(!ScratchCards::is_admin(&DEV_KEY));
+    assert_eq!(ANALYTICS_READERS, [DEV_KEY, OPS_KEY]);
 }

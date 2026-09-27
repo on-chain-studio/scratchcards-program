@@ -1,9 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{vault, Casino, CoreError};
 
-use crate::constants::treasury_seed;
-use crate::error::GameError;
-use crate::utils::{pda, vault};
+use crate::ScratchCards;
 
 /// Returns the jackpot's SOL as transaction return data. Rollup only, read through this program
 /// (the ledger's member) so the rollup ACL admits it; simulate-only, nothing signs or writes.
@@ -19,13 +18,10 @@ impl ReadJackpot {
         jackpot: &AccountInfo,
         ledger: &AccountInfo,
     ) -> ProgramResult {
-        let program_id = &crate::ID;
-
         // No `which` arg: reads only the pot, never the house balance.
-        let seed = treasury_seed(1)?;
-        pda::validate(program_id, jackpot, &[seed])?;
+        ScratchCards::treasury(1, jackpot)?;
         if *ledger.address() != vault::ledger(jackpot.address()) {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
 
         set_return_data(&vault::sol_balance(ledger)?.to_le_bytes());

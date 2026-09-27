@@ -84,7 +84,7 @@ export function App() {
     }
   }
 
-  // Re-pull token prices (scripts/fetch-prices.mjs, via the dev server), then reload so the value
+  // Re-pull token prices (`scratch-ops fetch-prices`, via the dev server), then reload so the value
   // columns reflect them. Prizes do not follow — rebuild the ladder separately.
   const updatePrices = async () => {
     setPricing(true)

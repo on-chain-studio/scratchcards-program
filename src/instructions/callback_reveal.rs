@@ -1,11 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, vrf, CoreError};
 
-use crate::error::GameError;
 use crate::state::card::{Card, CardStatus};
-use crate::utils::{pda, vrf};
 
-/// The VRF oracle's answer: 32 bytes of randomness signed by the VRF identity, written onto the card.
+/// The VRF oracle's answer: 32 bytes of randomness, signed by the VRF's identity scoped to this
+/// program (`vrf::scoped_identity`), written onto the card.
 /// Accounts: [vrf_identity (signer), card]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CallbackReveal {
@@ -22,15 +22,16 @@ impl CallbackReveal {
     ) -> ProgramResult {
         let program_id = &crate::ID;
 
-        if !vrf_identity.is_signer() || vrf_identity.address() != &vrf::callback_identity(program_id) {
+        if !vrf_identity.is_signer() || *vrf_identity.address() != vrf::scoped_identity(program_id) {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         let card = Card::load_mut(card_account)?;
         if card.status != CardStatus::Requested as u64 {
-            return Err(GameError::WrongStatus.into());
+            return Err(CoreError::WrongStatus.into());
         }
-        // The VRF identity signs whatever request named it; bind the callback to this user's card.
+        // The scoped identity signs for any request this program made; bind the callback to this
+        // user's card.
         pda::validate(program_id, card_account, &[b"card", card.user.as_ref()])?;
         card.seed = self.randomness;
         card.status = CardStatus::Revealed as u64;

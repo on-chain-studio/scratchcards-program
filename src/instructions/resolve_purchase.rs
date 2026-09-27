@@ -1,14 +1,13 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::EPHEMERAL_VAULT_ID;
-use crate::magicblock::create_ephemeral_account;
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::ids::VAULT_PROGRAM;
+use casino_core::magicblock::{create_ephemeral_account, create_ephemeral_permission, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::{pda, receipt, CoreError};
 
 use crate::constants::JACKPOT_SHARE_BP;
-use crate::error::GameError;
 use crate::state::analytics::Analytics;
 use crate::state::card::{self, Card, CardStatus};
 use crate::state::Config;
-use crate::utils::{pda, receipt};
 
 /// Turns a settled receipt into a card. The seed comes later via `RequestReveal`, so a failed VRF
 /// request can't unwind a paid purchase.
@@ -38,7 +37,7 @@ impl ResolvePurchase {
         let program_id = &crate::ID;
 
         if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
         pda::validate(program_id, config_account, &[b"config"])?;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
@@ -50,10 +49,10 @@ impl ResolvePurchase {
             program_id, card_account, &[b"card", self.human.as_ref()],
         )?;
         if card_account.data_len() != 0 {
-            return Err(GameError::AlreadyInitialized.into());
+            return Err(CoreError::AlreadyInitialized.into());
         }
 
-        let terms = *Config::card(config_account, card_id)?;
+        let terms = *Config::item(config_account, card_id)?;
 
         create_ephemeral_account(
             house,
@@ -88,14 +87,16 @@ impl ResolvePurchase {
         // rent), never closed (closing would re-expose the not-yet-compressed history) and never
         // rewritten: an update through the ACL program drops the owning program from the list
         // and the rollup then refuses it for good. A permission is made once and left alone.
+        // Every member reads in full (`MEMBER_READ`) but none holds authority over the list.
         if card_permission.data_len() == 0 {
-            let members = [self.human, crate::constants::VAULT_PROGRAM];
+            let members = [self.human, VAULT_PROGRAM];
             let signers: &[&[&[u8]]] = &[
                 &[b"house", &[house_bump]],
                 &[b"card", self.human.as_ref(), &[card_bump]],
             ];
-            crate::magicblock::create_ephemeral_permission(
-                house, card_account, card_permission, ephemeral_vault, magic_program, permission_program, &members, signers,
+            create_ephemeral_permission(
+                house, card_account, card_permission, ephemeral_vault, magic_program, permission_program, &members,
+                MEMBER_READ, signers,
             )?;
         }
 
@@ -107,7 +108,7 @@ impl ResolvePurchase {
         a.lamports_in = a.lamports_in.saturating_add(price);
         a.jackpot_in = a.jackpot_in.saturating_add(take);
         if let Some(slot) = a.cards_sold.get_mut(card_id as usize) {
-            Analytics::count(slot);
+            casino_core::analytics::count(slot);
         }
 
         Ok(())

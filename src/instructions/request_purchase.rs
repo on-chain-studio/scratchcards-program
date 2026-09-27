@@ -1,10 +1,9 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::chain::*;
+use casino_core::chain::*;
+use casino_core::{pda, receipt, vault, CoreError};
 
 use crate::constants::JACKPOT_SHARE_BP;
-use crate::error::GameError;
 use crate::state::Config;
-use crate::utils::{pda, receipt, vault};
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestPurchase {
@@ -38,13 +37,13 @@ impl RequestPurchase {
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
         pda::validate(program_id, jackpot, &[b"jackpot"])?;
         if *house_ledger.address() != vault::ledger(house.address()) {
-            return Err(GameError::InvalidPDA.into());
+            return Err(CoreError::InvalidPDA.into());
         }
-        if *receipt_account.address() != receipt::address(wallet.address()) {
-            return Err(GameError::InvalidPDA.into());
+        if *receipt_account.address() != receipt::address(program_id, wallet.address()) {
+            return Err(CoreError::InvalidPDA.into());
         }
 
-        let price = Config::card(config_account, self.card_id)?.price_lamports;
+        let price = Config::item(config_account, self.card_id)?.price_lamports;
         let take = price.saturating_mul(JACKPOT_SHARE_BP) / 10_000;
         let sol = Pubkey::default();
 

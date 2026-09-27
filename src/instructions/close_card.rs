@@ -1,10 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::magicblock::EPHEMERAL_VAULT_ID;
-use crate::chain::*;
+use casino_core::admin::close_player_account;
+use casino_core::chain::*;
 
-use crate::constants::is_admin;
-use crate::error::GameError;
-use crate::utils::{pda, receipt};
+use crate::ScratchCards;
 
 /// Drops a card and returns its rent to the house. Admin only — a card is paid-for, so closing one
 /// at will would destroy a player's ticket; this is the escape hatch for a stranded card.
@@ -17,7 +15,7 @@ pub struct CloseCard {
 
 impl CloseCard {
     #[inline(always)]
-    pub fn process<'a>(
+    pub fn process(
         &self,
         admin: &AccountInfo,
         house: &AccountInfo,
@@ -25,17 +23,6 @@ impl CloseCard {
         ephemeral_vault: &AccountInfo,
         magic_program: &AccountInfo,
     ) -> ProgramResult {
-        let program_id = &crate::ID;
-
-        if !admin.is_signer() || !is_admin(admin.address()) {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
-        if *ephemeral_vault.address() != EPHEMERAL_VAULT_ID {
-            return Err(GameError::InvalidPDA.into());
-        }
-        let house_bump = pda::validate(program_id, house, &[b"house"])?;
-        pda::validate(program_id, card_account, &[b"card", self.user.as_ref()])?;
-
-        receipt::close(magic_program, house, card_account, ephemeral_vault, house_bump)
+        close_player_account::<ScratchCards>(b"card", &self.user, admin, house, card_account, ephemeral_vault, magic_program)
     }
 }
