@@ -28,6 +28,7 @@ impl RequestReveal {
         let identity_bump = pda::validate(program_id, identity, &[b"identity"])?;
         pda::validate(program_id, card_account, &[b"card", user.address().as_ref()])?;
 
+        let generation = Card::generation(card_account)?;
         {
             let card = Card::load_mut(card_account)?;
             if card.user != user.address().to_bytes() {
@@ -42,19 +43,24 @@ impl RequestReveal {
             card.status = CardStatus::Requested as u64;
         }
 
+        // Unique per card bought, so no request repeats an earlier card's input.
+        let mut caller_seed = card_account.address().to_bytes();
+        for (i, b) in generation.to_le_bytes().iter().enumerate() {
+            caller_seed[i] ^= b;
+        }
+
         vrf::request_randomness(
             program_id, house, identity, identity_bump, oracle_queue, system_program,
             slot_hashes, vrf_program,
-            card_account.address().to_bytes(),
+            caller_seed,
             crate::ScratchCardsInstruction::CALLBACK_REVEAL.to_le_bytes(),
             vec![vrf::SerializableAccountMeta {
                 pubkey: *card_account.address(),
                 is_signer: false,
                 is_writable: true,
             }],
-            // Nothing rides the callback: a card has one seed, and `callback_reveal` takes only
-            // the first that lands.
-            Vec::new(),
+            // Reject delayed answers meant for an earlier card.
+            generation.to_le_bytes().to_vec(),
             &[b"house", &[house_bump]],
             true,
         )

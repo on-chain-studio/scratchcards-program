@@ -8,6 +8,9 @@ use casino_core::Casino;
 
 use crate::ScratchCards;
 
+/// The casino floor program. It is top-level over cards, so it must be a member of their permission.
+pub const PRIVATE_CASINO: Pubkey = Pubkey::from_str_const("EzQPZpLj8DccG7M7VCyr9kEm4wFLZi6pDGfxrAsLNz6z");
+
 /// The house, then the progressive pot. The order is wire format — it is what every treasury
 /// instruction's `which` byte means — so the jackpot is 1 for as long as the program lives.
 pub const TREASURIES: [&[u8]; 2] = [b"house", b"jackpot"];

@@ -1,10 +1,9 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
-use casino_core::ids::VAULT_PROGRAM;
-use casino_core::magicblock::{create_ephemeral_account, create_ephemeral_permission, EPHEMERAL_VAULT_ID, MEMBER_READ};
-use casino_core::{pda, receipt, CoreError};
+use casino_core::magicblock::{create_ephemeral_account, EPHEMERAL_VAULT_ID, MEMBER_READ};
+use casino_core::{pda, permission, receipt, CoreError};
 
-use crate::constants::JACKPOT_SHARE_BP;
+use crate::constants::{JACKPOT_SHARE_BP, PRIVATE_CASINO};
 use crate::state::analytics::Analytics;
 use crate::state::card::{self, Card, CardStatus};
 use crate::state::Config;
@@ -48,23 +47,29 @@ impl ResolvePurchase {
         let card_bump = pda::validate(
             program_id, card_account, &[b"card", self.human.as_ref()],
         )?;
-        if card_account.data_len() != 0 {
-            return Err(CoreError::AlreadyInitialized.into());
-        }
+        let (generation, previous_seed) = if card_account.data_len() == 0 {
+            (1, [0; 32])
+        } else {
+            if !card_account.owned_by(program_id) { return Err(ProgramError::IllegalOwner); }
+            let previous = *Card::load(card_account)?;
+            if previous.user != self.human.to_bytes() || previous.discriminator != card::DISCRIMINATOR {
+                return Err(CoreError::Unauthorized.into());
+            }
+            if previous.status != CardStatus::Collected as u64 { return Err(CoreError::AlreadyInitialized.into()); }
+            (Card::generation(card_account)?.checked_add(1).ok_or(ProgramError::ArithmeticOverflow)?, previous.seed)
+        };
 
         let terms = *Config::item(config_account, card_id)?;
 
-        create_ephemeral_account(
-            house,
-            card_account,
-            ephemeral_vault,
-            magic_program,
-            Card::WITH_TERMS as u32,
-            &[
-                &[b"house", &[house_bump]],
-                &[b"card", self.human.as_ref(), &[card_bump]],
-            ],
-        )?;
+        if card_account.data_len() != 0 && card_account.data_len() < Card::PERSISTENT_SIZE {
+            receipt::close(magic_program, house, card_account, ephemeral_vault, house_bump)?;
+        }
+        if card_account.data_len() == 0 {
+            create_ephemeral_account(house, card_account, ephemeral_vault, magic_program,
+                Card::PERSISTENT_SIZE as u32,
+                &[&[b"house", &[house_bump]], &[b"card", self.human.as_ref(), &[card_bump]]])?;
+        }
+        Card::set_generation(card_account, generation)?;
 
         {
             let c = Card::load_mut(card_account)?;
@@ -73,32 +78,15 @@ impl ResolvePurchase {
             c.user = self.human.to_bytes();
             c.card_id = card_id;
             c.status = CardStatus::Bought as u64;
-            c.seed = [0u8; 32];
+            c.seed = previous_seed;
         }
         Card::write_terms(card_account, &terms)?;
 
-        // Make the card private on the TEE. A stranger can otherwise derive ["card", user] and read
-        // the account and its entire signature history (every purchase/reveal/collect, timestamped).
-        // Members: the player's wallet, whose own TEE token authorises the client's reads and
-        // subscriptions, and every program that is ever top-level over the card in an ordinary
-        // transaction — a private-rollup account admits one only when its top-level program is a
-        // member: the vault (settle callbacks). The VRF oracle's callback is admitted without
-        // membership, like a crank, so the VRF program is not on the list. ER-only (house fronts the
-        // rent), never closed (closing would re-expose the not-yet-compressed history) and never
-        // rewritten: an update through the ACL program drops the owning program from the list
-        // and the rollup then refuses it for good. A permission is made once and left alone.
-        // Every member reads in full (`MEMBER_READ`) but none holds authority over the list.
-        if card_permission.data_len() == 0 {
-            let members = [self.human, VAULT_PROGRAM];
-            let signers: &[&[&[u8]]] = &[
-                &[b"house", &[house_bump]],
-                &[b"card", self.human.as_ref(), &[card_bump]],
-            ];
-            create_ephemeral_permission(
-                house, card_account, card_permission, ephemeral_vault, magic_program, permission_program, &members,
-                MEMBER_READ, signers,
-            )?;
-        }
+        permission::upgrade_ephemeral(
+            program_id, permission_program, card_account, &[b"card", self.human.as_ref(), &[card_bump]],
+            card_permission, house, &[b"house", &[house_bump]], ephemeral_vault, magic_program,
+            card_members(&self.human), MEMBER_READ,
+        )?;
 
         // This callback only fires on a settled payment, so the count is settled money.
         pda::validate(program_id, analytics_account, &[b"analytics"])?;
@@ -113,4 +101,8 @@ impl ResolvePurchase {
 
         Ok(())
     }
+}
+
+pub fn card_members(human: &Pubkey) -> Vec<Pubkey> {
+    permission::ephemeral_members(&[*human, PRIVATE_CASINO])
 }

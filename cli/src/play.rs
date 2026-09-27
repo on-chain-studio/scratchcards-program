@@ -11,12 +11,13 @@ use casino_ops::magicblock::{EPHEMERAL_VAULT, MAGIC_CONTEXT, MAGIC_PROGRAM, SLOT
 use casino_ops::vault::{self, SYSTEM_PROGRAM};
 use casino_ops::{sol, Chain, Endpoint, Instruction, Keypair, Player, Pubkey, Signer, Treasury};
 use scratch_cards::instructions::{request_purchase::RequestPurchase, resolve_collect::ResolveCollect, resolve_purchase::ResolvePurchase};
-use scratch_cards::state::card::{self, Card};
+use scratch_cards::state::card::{self, Card, CardStatus};
 
 use crate::sheet::Mints;
 use crate::{analytics, card_of, config, generated, house, identity, jackpot, ScratchCards};
 
-const REVEALED: u64 = 2;
+const REVEALED: u64 = CardStatus::Revealed as u64;
+const COLLECTED: u64 = CardStatus::Collected as u64;
 
 fn built(result: solarium_client::result::Result<Instruction>) -> Result<Instruction> {
     result.map_err(|e| anyhow::anyhow!("{e}"))
@@ -81,12 +82,17 @@ impl Table<'_, '_> {
             ResolveCollect { human: user, jackpot_paid: 0 },
         ))?;
         self.player.play(&self.at, &[request, self.player.settle::<ScratchCards>(resolve)]).await?;
-        self.player.until("the card closing", async || Ok(self.card().await?.is_none().then_some(()))).await
+        // Older programs close the card instead.
+        self.player
+            .until("the card collected", async || {
+                Ok(self.card().await?.is_none_or(|c| c.status == COLLECTED).then_some(()))
+            })
+            .await
     }
 
     /// Carries a card left mid-flow through: reveal if it has no seed, then collect.
     pub async fn finish(&self) -> Result<bool> {
-        let Some(card) = self.card().await? else { return Ok(false) };
+        let Some(card) = self.card().await?.filter(|c| c.status != COLLECTED) else { return Ok(false) };
         println!("  a card from an earlier run: status {}, card {}", status(card.status), card.card_id);
         if card.status != REVEALED {
             self.reveal().await?;
@@ -98,7 +104,7 @@ impl Table<'_, '_> {
 }
 
 pub fn status(status: u64) -> &'static str {
-    ["bought", "requested", "revealed"].get(status as usize).copied().unwrap_or("?")
+    ["bought", "requested", "revealed", "collected"].get(status as usize).copied().unwrap_or("?")
 }
 
 pub async fn play(chain: &Chain, wallet: &Keypair, cards: u32, card_id: u64, close: bool) -> Result<()> {
@@ -147,7 +153,7 @@ pub async fn play(chain: &Chain, wallet: &Keypair, cards: u32, card_id: u64, clo
                 }
             }
         }
-        println!("  ✅ collected: {}", if won.is_empty() { "no win — card closed".to_string() } else { won.join(", ") });
+        println!("  ✅ collected: {}", if won.is_empty() { "no win".to_string() } else { won.join(", ") });
         played += 1;
     }
 

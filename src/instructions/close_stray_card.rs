@@ -39,7 +39,7 @@ impl CloseStrayCard {
         if data.len() < 8 || u64::from_le_bytes(data[..8].try_into().unwrap()) != card::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
-        if data.len() == Card::WITH_TERMS {
+        if data.len() == Card::WITH_TERMS || data.len() == Card::PERSISTENT_SIZE {
             return Err(CoreError::InvalidPDA.into());
         }
         drop(data);

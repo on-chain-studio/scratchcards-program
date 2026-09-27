@@ -12,12 +12,11 @@ pub enum CardStatus {
     Bought    = 0,
     Requested = 1,
     Revealed  = 2,
-    // There is no Collected: a card is collected when it is closed. Marking it instead left a
-    // state anyone could strand — see request_collect.
+    Collected = 3,
 }
 
-/// `["card", user]` — one bought scratch card. The VRF seed lands here and the outcome derives
-/// from it. Carries its own `terms`, copied from the config at purchase, so a later rebalance
+/// `["card", user]` — the player's scratch card, reused: collection retains the resolved result.
+/// The VRF seed lands here and the outcome derives from it. Carries its own `terms`, copied from the config at purchase, so a later rebalance
 /// can't rewrite a ticket someone already owns.
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy)]
@@ -35,6 +34,21 @@ impl Card {
 
     /// A card sold with its terms printed after it.
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<CardConfig>();
+    pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
+
+    // After the terms, so existing offsets are unchanged.
+    pub fn generation(account: &AccountInfo) -> Result<u64, ProgramError> {
+        let data = account.try_borrow()?;
+        let Some(bytes) = data.get(Self::WITH_TERMS..Self::PERSISTENT_SIZE) else { return Ok(0) };
+        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    pub fn set_generation(account: &AccountInfo, generation: u64) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        let bytes = data.get_mut(Self::WITH_TERMS..Self::PERSISTENT_SIZE).ok_or(ProgramError::InvalidAccountData)?;
+        bytes.copy_from_slice(&generation.to_le_bytes());
+        Ok(())
+    }
 
     /// Read-only, for the paths that must not write — `request_collect` reads a card it is
     /// deliberately forbidden to mark, since anyone may ask for a payout.

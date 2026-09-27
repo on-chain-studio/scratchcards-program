@@ -10,6 +10,7 @@ use crate::state::card::{Card, CardStatus};
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CallbackReveal {
     pub randomness: [u8; 32],
+    pub generation: u64,
 }
 
 
@@ -26,6 +27,9 @@ impl CallbackReveal {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
+        if Card::generation(card_account)? != self.generation {
+            return Err(CoreError::WrongStatus.into());
+        }
         let card = Card::load_mut(card_account)?;
         if card.status != CardStatus::Requested as u64 {
             return Err(CoreError::WrongStatus.into());

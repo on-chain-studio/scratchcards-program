@@ -64,6 +64,7 @@ fn wire_numbers_are_pinned() {
     assert_eq!(ix::REQUEST_REVEAL, 28);
     assert_eq!(ix::RESOLVE_COLLECT, 29);
     assert_eq!(ix::UNDELEGATE_TREASURY, 30);
+    assert_eq!(ix::UPGRADE_PERMISSIONS, 32);
 }
 
 mod wire {
@@ -84,7 +85,7 @@ mod wire {
                 "{retired} is not the no-op"
             );
         }
-        for past in [32, 255] {
+        for past in [33, 255] {
             assert!(ScratchCards::instruction(&input(past, &[])).is_err(), "{past} was answered");
         }
         assert!(ScratchCards::instruction(&[24, 0, 0, 0]).is_err(), "a short tag was answered");
@@ -119,13 +120,14 @@ mod wire {
     }
 
     #[test]
-    fn the_oracle_answer_is_read_as_randomness() {
+    fn the_oracle_answer_is_read_as_randomness_then_generation() {
+        let arguments = [&[5u8; 32][..], &4u64.to_le_bytes()].concat();
         let ScratchCardsInstruction::CallbackReveal(reveal) =
-            ScratchCards::instruction(&input(12, &[5u8; 32])).unwrap()
+            ScratchCards::instruction(&input(12, &arguments)).unwrap()
         else {
             panic!("12 did not reach callback_reveal");
         };
-        assert_eq!(reveal.args.randomness, [5; 32]);
+        assert_eq!((reveal.args.randomness, reveal.args.generation), ([5; 32], 4));
     }
 }
 

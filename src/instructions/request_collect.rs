@@ -48,11 +48,8 @@ impl RequestCollect {
             return Err(CoreError::InvalidPDA.into());
         }
 
-        // Nothing about the card is written here. A card is collected when it is *gone* — the
-        // settle callback closes it — so asking for a payout leaves no state to strand. This is
-        // load-bearing: requesting is permissionless, and a version that marked the card spent
-        // let anyone flip a stranger's revealed card and then simply never settle, destroying the
-        // win and blocking that player from ever buying again.
+        // Only successful settlement marks the card collected. Marking it here would let an
+        // abandoned payout request consume a win without paying it.
         let (card_id, seed) = {
             let card = Card::load(card_account)?;
             if card.user != user.address().to_bytes() {

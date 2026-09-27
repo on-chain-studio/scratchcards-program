@@ -74,7 +74,7 @@ impl Table {
     fn reveal(&self, signer: Pubkey, extra: &[u8]) -> Instruction {
         Instruction::new_with_bytes(
             program(),
-            &input(12, &[&[9u8; 32][..], extra].concat()),
+            &input(12, &[&[9u8; 32][..], &0u64.to_le_bytes(), extra].concat()),
             vec![AccountMeta::new_readonly(signer, true), AccountMeta::new(self.card, false)],
         )
     }
@@ -85,7 +85,7 @@ impl Table {
 fn the_oracle_lands_its_seed_on_a_requested_card() {
     let table = Table::new();
     let result = mollusk().process_instruction(
-        // Whatever the oracle appends after the randomness is not the program's business.
+        // Whatever the oracle appends after the generation is not the program's business.
         &table.reveal(vrf_identity(), &[0xAA; 8]),
         &[(vrf_identity(), wallet()), (table.card, table.card_account(CardStatus::Requested))],
     );
@@ -162,7 +162,7 @@ fn retired_numbers_are_no_ops_too() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_past_the_list_are_invalid_data() {
     let table = Table::new();
-    for retired in [32u64, 33, 255, 1 << 40] {
+    for retired in [33u64, 34, 255, 1 << 40] {
         let mut instruction = table.reveal(vrf_identity(), &[]);
         instruction.data[..8].copy_from_slice(&retired.to_le_bytes());
         let result = mollusk().process_instruction(
