@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import rawPrices from '@prices'
-import { onDisk, seed, readDraft, writeDraft, clearDraft, saveToDisk, same, parseSheet,
+import { onDisk, seed, readDraft, writeDraft, clearDraft, saveToDisk, same,
   designOnDisk, readDesign, writeDesign, clearDesign, saveDesign, readPick, writePick } from './model/store'
 import { Card, Block, Pay, Design, TARGET_RTP, TOTAL, MCAP, DEFAULT_LADDER, normalize, bodyLen, popcount, settleRoll, jackpotHitFor } from './model/types'
 import { analyse, Prices } from './model/analytics'
@@ -14,6 +14,7 @@ import { fmt, usd, pct } from './ui/format'
 import { NumberField } from './ui/Weight'
 import { BandChart } from './ui/Charts'
 import { AnalyticsView } from './ui/AnalyticsView'
+import { TreasuryView } from './ui/TreasuryView'
 import { RangeSlider } from './ui/RangeSlider'
 
 const PRICES: Prices = Object.fromEntries(
@@ -48,10 +49,11 @@ export function App() {
   const [selected, setSelected] = useState<number | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [pricing, setPricing] = useState(false)
+  const [publishing, setPublishing] = useState(false)
   const [asJson, setAsJson] = useState(false)
   const [copied, setCopied] = useState(false)
   const [design, setDesign] = useState<Design>(() => readDesign() ?? DESIGN)
-  const [view, setView] = useState<'cards' | 'analytics'>('cards')
+  const [view, setView] = useState<'cards' | 'analytics' | 'treasury'>('cards')
 
   // The design (min/max/bend per card) is part of the draft too: it feeds every rebalance,
   // so a slider twitch that only touched the browser copy must show as unsaved, not hide in
@@ -99,17 +101,37 @@ export function App() {
     }
   }
 
-  const file = useRef<HTMLInputElement>(null)
-
-  const upload = async (chosen: File) => {
+  // Publishes what is on disk, so unsaved edits would go out as the previous sheet.
+  // Devnet always, because a shelf the two chains disagree on makes devnet stop predicting
+  // mainnet — mainnet is asked for, because it is the live prize table.
+  const publish = async () => {
+    if (dirty) return setStatus('save to disk first — publishing sends the saved sheet')
+    setPublishing(true)
     try {
-      const next = parseSheet(await chosen.text())
-      setCards(next)
-      setPick(0)
-      setSelected(null)
-      setStatus(`loaded ${chosen.name} — ${next.length} cards, not saved yet`)
+      setStatus('publishing to devnet…')
+      const dev = await fetch('/__sheet/publish', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cluster: 'devnet' }),
+      }).then(r => r.json())
+      if (!dev.ok) throw new Error(dev.error || 'devnet publish failed')
+
+      if (!confirm(`Devnet published (${cards.length} cards).\n\nAlso publish to MAINNET? This rewrites the live prize table.`)) {
+        setStatus('published to devnet — mainnet unchanged')
+        return
+      }
+      setStatus('publishing to mainnet…')
+      const main = await fetch('/__sheet/publish', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cluster: 'mainnet' }),
+      }).then(r => r.json())
+      if (!main.ok) throw new Error(main.error || 'mainnet publish failed')
+      setStatus('published to devnet and mainnet')
     } catch (e) {
-      setStatus(`upload failed — ${e instanceof Error ? e.message : String(e)}`)
+      setStatus(`publish failed — ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setPublishing(false)
     }
   }
 
@@ -377,6 +399,11 @@ export function App() {
             title="the deployed game's counters — live tiles and the recorded history, graphed">
             Analytics
           </button>
+          <button className="tab" role="tab" aria-selected={view === 'treasury'}
+            onClick={() => setView('treasury')}
+            title="house and pool balances per token, against the sheet's worst single collect">
+            Treasury
+          </button>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="tab" onClick={rebalanceAll}
@@ -396,17 +423,9 @@ export function App() {
           <button className="tab" onClick={resetSeed} title="back to today's sheet, converted">
             Reset to seed
           </button>
-          <input
-            ref={file} type="file" accept="application/json,.json" hidden
-            onChange={e => {
-              const chosen = e.target.files?.[0]
-              e.target.value = ''
-              if (chosen) upload(chosen)
-            }}
-          />
-          <button className="tab" onClick={() => file.current?.click()}
-            title="load a cards.json from anywhere">
-            Upload config
+          <button className="tab" onClick={publish} disabled={publishing || dirty}
+            title="publish the saved sheet: devnet always, mainnet on confirmation">
+            {publishing ? 'Uploading…' : 'Upload config'}
           </button>
           <button className="tab" onClick={discard} disabled={!dirty}>Discard</button>
           <button className={`tab save${dirty ? ' dirty' : ''}`} onClick={save} disabled={!dirty}>
@@ -439,8 +458,10 @@ export function App() {
       )}
 
       {view === 'analytics' && (
-        <AnalyticsView cardNames={cards.map(c => c.name)} solUsd={PRICES.SOL ?? 0} />
+        <AnalyticsView cardNames={cards.map(c => c.name)} solUsd={PRICES.SOL ?? 0} prices={PRICES} />
       )}
+
+      {view === 'treasury' && <TreasuryView />}
 
       {view === 'cards' && <>
       <div className="tiles" style={{ marginBottom: 14 }}>

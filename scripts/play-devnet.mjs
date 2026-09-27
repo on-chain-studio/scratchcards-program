@@ -342,6 +342,13 @@ const resolvePurchaseAccounts = (user) => [
 
 /** RequestReveal (28) — asks the oracle for the seed. Permissionless and retryable, so it
  *  is split out of the payment: a failed VRF request cannot unwind a settled purchase. */
+const upgradePermissionsIx = (user) => new TransactionInstruction({
+  programId: PROGRAM,
+  keys: [ro(user), ro(cardPda(user)), rw(permPda(cardPda(user))), rw(housePda()),
+    rw(EPHEMERAL_VAULT), ro(MAGIC_PROGRAM), ro(PERMISSION)],
+  data: header(32),
+});
+
 const requestRevealIx = (user) => new TransactionInstruction({
   programId: PROGRAM,
   keys: [
@@ -494,8 +501,7 @@ async function main() {
         const stranger = Keypair.generate();
         let refused = true;
         try {
-          await send(tee, [
-            requestPurchaseIx(stranger.publicKey, player.publicKey, 0),
+          await send(tee, [upgradePermissionsIx(player.publicKey), requestPurchaseIx(stranger.publicKey, player.publicKey, 0),
             settleReceiptIx(player.publicKey, stranger.publicKey, true,
                             purchaseLedgers(player.publicKey),
                             resolvePurchaseAccounts(player.publicKey)),
@@ -508,8 +514,7 @@ async function main() {
       // Two instructions, one transaction: record the terms, then settle them. The card is
       // created by the callback inside the settle, from the card id the receipt carries — so
       // the card bought cannot differ from the card paid for.
-      await send(tee, [
-        requestPurchaseIx((session ?? player).publicKey, player.publicKey, 0),
+      await send(tee, [upgradePermissionsIx(player.publicKey), requestPurchaseIx((session ?? player).publicKey, player.publicKey, 0),
         settleReceiptIx(player.publicKey, (session ?? player).publicKey, true,
                         purchaseLedgers(player.publicKey),
                         resolvePurchaseAccounts(player.publicKey)),
@@ -519,7 +524,7 @@ async function main() {
 
       // Its own transaction on purpose: permissionless and retryable, so a VRF request that
       // fails cannot unwind a purchase that is already paid for.
-      await send(tee, [requestRevealIx(player.publicKey)], [player]);
+      await send(tee, [upgradePermissionsIx(player.publicKey), requestRevealIx(player.publicKey)], [player]);
       ok('reveal requested');
 
       let card = null;
@@ -534,8 +539,7 @@ async function main() {
       const before = await readLedger(tee, player.publicKey);
       // request → settle → collect. A losing card has no receipt, so the settle is skipped.
       // Same shape for the payout: the callback closes the card and the receipt.
-      await send(tee, [
-        requestCollectIx(player.publicKey),
+      await send(tee, [upgradePermissionsIx(player.publicKey), requestCollectIx(player.publicKey),
         settleReceiptIx(player.publicKey, player.publicKey, true,
                         collectLedgers(player.publicKey),
                         resolveCollectAccounts(player.publicKey)),

@@ -8,7 +8,7 @@
 import fs from 'fs';
 import crypto from 'crypto';
 import { Connection, PublicKey } from '@solana/web3.js';
-import { MAGIC_RPC, MINTS } from './net.mjs';
+import { MAGIC_RPC, BASENET, MINTS } from './net.mjs';
 
 export const RPC = MAGIC_RPC;
 export const PROGRAM_ID = new PublicKey('GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC');
@@ -73,9 +73,14 @@ export function loadEngine() {
 export const seedFor = (card, n) => crypto.createHash('sha256').update(`${card}:${n}`).digest();
 
 export async function loadCards() {
-  const conn = new Connection(RPC, 'confirmed');
   const [configPda] = PublicKey.findProgramAddressSync([Buffer.from('config')], PROGRAM_ID);
-  const info = await conn.getAccountInfo(configPda);
+  // A plain base-chain read, so any basenet RPC will do — take the first that answers.
+  let info;
+  for (const url of [RPC, BASENET]) {
+    try { info = await new Connection(url, 'confirmed').getAccountInfo(configPda); break; }
+    catch { /* gateway down — try the next endpoint */ }
+  }
+  if (info === undefined) throw new Error('no basenet RPC reachable');
   if (!info) throw new Error('no config on chain — run scripts/setup-devnet.mjs');
   const d = info.data;
 

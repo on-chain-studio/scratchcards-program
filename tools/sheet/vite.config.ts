@@ -98,11 +98,15 @@ function sheetIO(): Plugin {
         recorder(cluster) // reading the graph is also the cue to start recording
         res.setHeader('content-type', 'application/json')
         try {
-          const rows = existsSync(historyFile(cluster))
+          const all = existsSync(historyFile(cluster))
             ? readFileSync(historyFile(cluster), 'utf8').trim().split('\n')
                 .map(l => { try { return JSON.parse(l) } catch { return null } })
-                .filter((r: any) => r && r.t >= from && r.t <= to)
+                .filter((r: any) => r && r.t <= to)
             : []
+          // include the last row before the range as a baseline, so the client can take
+          // deltas without attributing the counter's whole prior lifetime to the first bucket
+          const baseline = all.filter((r: any) => r.t < from).pop()
+          const rows = [...(baseline ? [baseline] : []), ...all.filter((r: any) => r.t >= from)]
           res.end(JSON.stringify(rows))
         } catch (e) {
           res.statusCode = 500
@@ -110,7 +114,58 @@ function sheetIO(): Plugin {
         }
       })
 
+      // Treasury snapshot: house ledger, basenet pools, worst collect per token — the admin
+      // key stays server-side, and a short cache keeps tab re-renders from spawning runs.
+      const balancesCache: Record<string, { t: number; body: string }> = {}
+      server.middlewares.use('/__sheet/balances', (req: any, res: any) => {
+        const q = new URL(req.url, 'http://x').searchParams
+        const cluster = q.get('cluster') === 'devnet' ? 'devnet' : 'mainnet'
+        res.setHeader('content-type', 'application/json')
+        const hit = balancesCache[cluster]
+        if (!q.get('fresh') && hit && Date.now() - hit.t < 30_000) return res.end(hit.body)
+        const args = ['scripts/_balances-json.mjs', ...(cluster === 'mainnet' ? ['--mainnet'] : [])]
+        execFile('node', args, { cwd: repo, timeout: 60_000 }, (err, stdout) => {
+          const line = String(stdout).trim().split('\n').reverse()
+            .find(l => { try { JSON.parse(l); return true } catch { return false } })
+          if (!line) {
+            res.statusCode = 500
+            return res.end(JSON.stringify({ ok: false, error: String(err ?? 'no output') }))
+          }
+          balancesCache[cluster] = { t: Date.now(), body: line }
+          res.end(line)
+        })
+      })
+
       // Re-pull token prices: runs scripts/fetch-prices.mjs and returns the fresh prices.json.
+      /** Publishes the sheet on disk to a cluster's card shelf. Writes the live prize table. */
+      server.middlewares.use('/__sheet/publish', (req: any, res: any) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          return res.end()
+        }
+        let body = ''
+        req.on('data', (c: any) => { body += c })
+        req.on('end', () => {
+          let cluster = ''
+          try { cluster = JSON.parse(body || '{}').cluster } catch {}
+          if (cluster !== 'mainnet' && cluster !== 'devnet') {
+            res.statusCode = 400
+            res.setHeader('content-type', 'application/json')
+            return res.end(JSON.stringify({ ok: false, error: 'cluster must be mainnet or devnet' }))
+          }
+          const args = ['scripts/setup-devnet.mjs', '--cards-only']
+          if (cluster === 'mainnet') args.push('--mainnet')
+          execFile('node', args, { cwd: repo, timeout: 600_000 }, (err: any, stdout: any, stderr: any) => {
+            res.setHeader('content-type', 'application/json')
+            if (err) {
+              res.statusCode = 500
+              return res.end(JSON.stringify({ ok: false, error: String(stderr || err).slice(-4000) }))
+            }
+            res.end(JSON.stringify({ ok: true, log: String(stdout).slice(-4000) }))
+          })
+        })
+      })
+
       server.middlewares.use('/__sheet/prices', (req: any, res: any) => {
         if (req.method !== 'POST') {
           res.statusCode = 405

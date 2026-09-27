@@ -16,7 +16,7 @@ import {
   Connection, Keypair, PublicKey, SystemProgram, Transaction,
   TransactionInstruction, sendAndConfirmTransaction, SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js';
-import { MAINNET, CLUSTER, MAGIC_RPC as RPC, MINTS as NET_MINTS, poolWeights } from './net.mjs';
+import { MAINNET, CLUSTER, MAGIC_RPC as RPC, BASENET, MINTS as NET_MINTS, poolWeights } from './net.mjs';
 const PROGRAM_ID = new PublicKey('GURqYrHYwoUNRLizD2sgRPFgwaV81C8HHm615HK9vtMC');
 const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const OUT = 'scripts/devnet.json';
@@ -61,7 +61,18 @@ const MODE = { count: 0, compare: 1 };
 const ROLL = { exclusive: 0, independent: 1 };
 
 const admin = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(ADMIN_PATH))));
-const conn = new Connection(RPC, 'confirmed');
+// Everything here is a plain base-chain write, so any basenet RPC will do — take the first
+// endpoint that answers.
+const conn = await (async () => {
+  for (const url of [RPC, BASENET]) {
+    try {
+      const c = new Connection(url, 'confirmed');
+      await c.getLatestBlockhash();
+      return c;
+    } catch { console.log(`  (${url} unreachable, trying next)`); }
+  }
+  throw new Error('no basenet RPC reachable');
+})();
 
 const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
 const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };

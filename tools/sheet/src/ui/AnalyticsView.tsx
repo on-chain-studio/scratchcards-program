@@ -79,7 +79,18 @@ function timeTicks(t0: number, t1: number): number[] {
   return ticks.length ? ticks : [t0, t1]
 }
 
-/** One series over time: 2px line in series-1, recessive grid, crosshair + tooltip on hover. */
+/** Bucket widths for the rate view: smallest round step that keeps the window ≤ 60 buckets. */
+const BUCKET_STEPS: [number, string][] = [
+  [60e3, 'min'], [300e3, '5 min'], [900e3, '15 min'], [1800e3, '30 min'],
+  [3600e3, 'hour'], [3 * 3600e3, '3 h'], [6 * 3600e3, '6 h'], [12 * 3600e3, '12 h'],
+  [86400e3, 'day'], [2 * 86400e3, '2 days'], [7 * 86400e3, 'week'],
+]
+
+/**
+ * One series over time as a rate: the cumulative counter is bucketed into round time units
+ * and each bucket plots its delta, so declines show as the line coming down. 2px line in
+ * series-1, recessive grid, crosshair + tooltip on hover.
+ */
 function LineChart({ points, unit, domain }: {
   points: { t: number; v: number }[]; unit: string; domain: [number, number]
 }) {
@@ -98,28 +109,43 @@ function LineChart({ points, unit, domain }: {
   // still sits on a full, legible timeline
   const [t0, t1] = domain
   const span = Math.max(t1 - t0, 1)
-  const vMin = Math.min(...points.map(p => p.v)), vMax = Math.max(...points.map(p => p.v))
-  const pad = (vMax - vMin) * 0.08 || Math.max(vMax * 0.08, 1e-9)
-  const lo = Math.max(0, vMin - pad), hi = vMax + pad
+  const [step, stepName] = BUCKET_STEPS.find(([s]) => span / s <= 60) ?? BUCKET_STEPS[BUCKET_STEPS.length - 1]
+  const align = step >= 86400e3 ? new Date().getTimezoneOffset() * 60e3 : 0
+  const start = Math.floor((t0 - align) / step) * step + align
+
+  // per-bucket delta of the cumulative counter, carrying the last value across quiet buckets;
+  // the first row is the server's baseline, so the first bucket only counts in-range changes
+  let j = 0, carry = points[0].v
+  const valueAt = (t: number) => {
+    while (j < points.length && points[j].t <= t) carry = points[j++].v
+    return carry
+  }
+  let prevV = valueAt(start)
+  const buckets: { b: number; t: number; v: number }[] = []
+  for (let b = start; b < t1; b += step) {
+    const endV = valueAt(b + step)
+    buckets.push({ b, t: (Math.max(b, t0) + Math.min(b + step, t1)) / 2, v: endV - prevV })
+    prevV = endV
+  }
+
+  const vMax = Math.max(...buckets.map(p => p.v), 0)
+  const lo = 0, hi = vMax + (vMax * 0.08 || 1e-9)
   const x = (t: number) => left + ((t - t0) / span) * (W - left - right)
   const y = (v: number) => top + (1 - (v - lo) / (hi - lo || 1)) * (H - top - bottom)
 
-  // counters hold between changes: step-after segments, and the last value carries to the edge
-  const last = points[points.length - 1]
-  const path = points.map((p, i) =>
-    i === 0 ? `M${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`
-      : `H${x(p.t).toFixed(1)}V${y(p.v).toFixed(1)}`).join('')
-    + (last.t < t1 ? `H${x(t1).toFixed(1)}` : '')
+  const last = buckets[buckets.length - 1]
+  const path = buckets.map((p, i) =>
+    `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join('')
   const yTicks = [lo, (lo + hi) / 2, hi]
   const xTicks = timeTicks(t0, t1)
-  const hovered = hover !== null ? points[hover] : null
+  const hovered = hover !== null ? buckets[hover] : null
 
   const onMove = (e: React.MouseEvent) => {
     const rect = svgRef.current?.getBoundingClientRect()
     if (!rect) return
     const mx = ((e.clientX - rect.left) / rect.width) * W
     let best = 0, bestD = Infinity
-    points.forEach((p, i) => {
+    buckets.forEach((p, i) => {
       const d = Math.abs(x(p.t) - mx)
       if (d < bestD) { bestD = d; best = i }
     })
@@ -150,7 +176,7 @@ function LineChart({ points, unit, domain }: {
         <text x={Math.min(x(last.t) + 8, W - right - 4)} y={y(last.v) - 8} fontSize={11}
           textAnchor={x(last.t) > W - 120 ? 'end' : 'start'}
           fill="var(--text-primary)" style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {fmtVal(last.v)} {unit}
+          {fmtVal(last.v)} {unit} / {stepName}
         </text>
         {hovered && (
           <g>
@@ -168,9 +194,11 @@ function LineChart({ points, unit, domain }: {
           background: 'var(--raised)', border: '1px solid var(--border)', borderRadius: 6,
           padding: '5px 9px', pointerEvents: 'none', fontSize: 11, whiteSpace: 'nowrap',
         }}>
-          <div style={{ color: 'var(--muted)' }}>{new Date(hovered.t).toLocaleString()}</div>
+          <div style={{ color: 'var(--muted)' }}>
+            {new Date(hovered.b).toLocaleString()} – {fmtTime(hovered.b + step, step)}
+          </div>
           <div style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-            {fmtVal(hovered.v)} {unit}
+            {fmtVal(hovered.v)} {unit} / {stepName}
           </div>
         </div>
       )}
@@ -178,7 +206,9 @@ function LineChart({ points, unit, domain }: {
   )
 }
 
-export function AnalyticsView({ cardNames, solUsd }: { cardNames: string[]; solUsd: number }) {
+export function AnalyticsView({ cardNames, solUsd, prices }: {
+  cardNames: string[]; solUsd: number; prices: Record<string, number>
+}) {
   const [cluster, setCluster] = useState<Cluster>('mainnet')
   const [live, setLive] = useState<Live | null>(null)
   const [to, setTo] = useState(() => Date.now())
@@ -209,6 +239,7 @@ export function AnalyticsView({ cardNames, solUsd }: { cardNames: string[]; solU
   const m = metrics[metric] ?? metrics.takenIn
   const points = useMemo(() => rows.map(r => ({ t: r.t, v: m.read(r) })), [rows, m])
   const delta = points.length >= 2 ? points[points.length - 1].v - points[0].v : 0
+  const changes = points.filter(p => p.t >= from).length
   const perCard = (a: number[]) => a
     .map((n, i) => (n > 0 ? `${cardNames[i] ?? `#${i}`} ×${n}` : null))
     .filter(Boolean).join(' · ') || undefined
@@ -228,6 +259,15 @@ export function AnalyticsView({ cardNames, solUsd }: { cardNames: string[]; solU
           <Tile k="Collected" v={`${sum(live.cardsCollected)}`} s={perCard(live.cardsCollected)} />
           <Tile k="Paid out" v={live.payouts.length ? `${live.payouts.length} token${live.payouts.length === 1 ? '' : 's'}` : '—'}
             s={live.payouts.map(p => `${fmtVal(p.whole)} ${p.token}`).join(' · ') || 'nothing yet'} />
+          {(() => {
+            // Valued at today's prices, not the prices at win time — approximate on purpose.
+            const paidUsd = live.payouts.reduce((n, p) => n + p.whole * (prices[p.token] ?? 0), 0)
+            const net = sol(live.lamportsIn) * solUsd - paidUsd
+            const afterPot = net - (sol(live.jackpotIn) - sol(live.jackpotPaid)) * solUsd
+            const signed = (n: number) => `${n < 0 ? '−' : '+'}$${Math.abs(n).toFixed(2)}`
+            return <Tile k="Payout value" v={`$${paidUsd.toFixed(2)}`}
+              s={`house net ${signed(net)} · ${signed(afterPot)} after jackpot pot`} />
+          })()}
         </div>
       )}
 
@@ -262,7 +302,7 @@ export function AnalyticsView({ cardNames, solUsd }: { cardNames: string[]; solU
         <LineChart points={points} unit={m.unit} domain={[from, pinnedToNow ? Date.now() : to]} />
         <div className="note">
           {points.length
-            ? <>In range: <strong>{fmtVal(delta)} {m.unit}</strong> across {points.length} recorded change{points.length === 1 ? '' : 's'}.</>
+            ? <>In range: <strong>{fmtVal(delta)} {m.unit}</strong> across {changes} recorded change{changes === 1 ? '' : 's'}.</>
             : 'Lifetime totals live on chain; the time series is recorded by this tool while it runs.'}
           {' '}<button className="mini" onClick={() => setShowTable(s => !s)}>{showTable ? 'hide table' : 'table'}</button>
         </div>

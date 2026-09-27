@@ -16,7 +16,7 @@ import {
 
 const VAULT = new PublicKey('VAULTrDSUBZ8AXL2kGVYE8eKAn7tgWXRPAevNGUsyTV');
 const RPC = 'https://api.devnet.solana.com';
-const VAULT_DIR = '/Users/tedosijses/projects/vault-program';
+const VAULT_DIR = '/Users/tedosijses/Projects/casino/vault-program';
 const SO = `${VAULT_DIR}/target/deploy/vault.so`;
 const PROGRAM_KEYPAIR = `${VAULT_DIR}/target/deploy/vault-keypair.json`;
 const IDL = `${VAULT_DIR}/vault-idl.json`;
