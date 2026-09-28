@@ -11,7 +11,7 @@ const ops = (args: string[]) => ['run', '--quiet', '--manifest-path', resolve(re
 const keys = process.env.KEYS_DIR ?? resolve(homedir(), 'keys')
 /** casino_admin signs every admin instruction on both clusters. */
 const admin = ['--keypair', resolve(keys, 'casino_admin.json')]
-/** The key each cluster's house-ledger permission names: the dev key on devnet, casino_admin on mainnet. */
+/** The key each cluster's house-ledger permission names: the auth key on devnet, casino_admin on mainnet. */
 const reader = (cluster: string) => ['--keypair', resolve(keys, cluster === 'mainnet' ? 'casino_admin.json' : 'dev.json')]
 const SHEET = resolve(__dirname, 'cards.json')
 const DESIGN = resolve(__dirname, 'design.json')
