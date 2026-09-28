@@ -1,12 +1,18 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { writeFileSync, readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 
 const repo = resolve(__dirname, '../..')
 /** The operator CLI (`cli/`, `scratch-ops`), run through cargo so it is built on first use. */
 const ops = (args: string[]) => ['run', '--quiet', '--manifest-path', resolve(repo, 'cli/Cargo.toml'), '--', ...args]
+const keys = process.env.KEYS_DIR ?? resolve(homedir(), 'keys')
+/** casino_admin signs every admin instruction on both clusters. */
+const admin = ['--keypair', resolve(keys, 'casino_admin.json')]
+/** The key each cluster's house-ledger permission names: the dev key on devnet, casino_admin on mainnet. */
+const reader = (cluster: string) => ['--keypair', resolve(keys, cluster === 'mainnet' ? 'casino_admin.json' : 'dev.json')]
 const SHEET = resolve(__dirname, 'cards.json')
 const DESIGN = resolve(__dirname, 'design.json')
 
@@ -45,7 +51,7 @@ function sheetIO(): Plugin {
         res.setHeader('content-type', 'application/json')
         const hit = balancesCache[cluster]
         if (!q.get('fresh') && hit && Date.now() - hit.t < 30_000) return res.end(hit.body)
-        const args = ops(['balances', ...(cluster === 'mainnet' ? ['--mainnet'] : [])])
+        const args = ops(['balances', ...reader(cluster), ...(cluster === 'mainnet' ? ['--mainnet'] : [])])
         execFile('cargo', args, { cwd: repo, timeout: 600_000 }, (err, stdout, stderr) => {
           const line = String(stdout).trim().split('\n').reverse()
             .find(l => { try { JSON.parse(l); return true } catch { return false } })
@@ -74,7 +80,7 @@ function sheetIO(): Plugin {
             res.setHeader('content-type', 'application/json')
             return res.end(JSON.stringify({ ok: false, error: 'cluster must be mainnet or devnet' }))
           }
-          const args = ops(['publish', '--cards-only', ...(cluster === 'mainnet' ? ['--mainnet'] : [])])
+          const args = ops(['publish', '--cards-only', ...admin, ...(cluster === 'mainnet' ? ['--mainnet'] : [])])
           execFile('cargo', args, { cwd: repo, timeout: 600_000 }, (err: any, stdout: any, stderr: any) => {
             res.setHeader('content-type', 'application/json')
             if (err) {
