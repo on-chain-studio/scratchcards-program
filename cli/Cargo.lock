@@ -766,6 +766,7 @@ dependencies = [
 [[package]]
 name = "casino-ops"
 version = "0.1.0"
+source = "git+ssh://git@github.com/on-chain-studio/casino-ops.git#d61f30159998ee79a3641f2a3555bef2190e3416"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -788,6 +789,7 @@ dependencies = [
 [[package]]
 name = "casino-web"
 version = "0.1.0"
+source = "git+ssh://git@github.com/on-chain-studio/casino-web.git#0579aea36c03d96dd214d2bf9bb695014950a7af"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -3509,10 +3511,12 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-client",
+ "solana-commitment-config",
  "solana-sdk",
  "solana-system-interface",
  "solarium-client",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -7474,31 +7478,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "blackjack"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "blackjack-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "bingo-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "video-bingo"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "slots"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "slots-engine"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "page"
-version = "0.1.0"

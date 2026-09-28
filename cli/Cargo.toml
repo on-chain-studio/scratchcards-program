@@ -35,3 +35,6 @@ solana-sdk = "4.1"
 solana-client = "4.3"
 solana-system-interface = { version = "3", features = ["bincode"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+solana-commitment-config = "3"
+

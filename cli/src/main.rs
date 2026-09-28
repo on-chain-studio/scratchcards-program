@@ -22,6 +22,7 @@
 mod float;
 mod play;
 mod prices;
+mod probe;
 mod sheet;
 
 use std::path::PathBuf;
@@ -174,6 +175,16 @@ enum Command {
         /// Undelegate, withdraw and close the ledger afterwards.
         #[arg(long)]
         close: bool,
+        /// Play as this keypair rather than the admin.
+        #[arg(long)]
+        wallet: Option<PathBuf>,
+    },
+    /// Lists the vault ledgers on basenet, or watches one — a wallet's, or a ledger itself — and
+    /// timestamps every change and every change of hands.
+    WatchLedger { who: Option<String> },
+    /// Does the rollup push account notifications? Subscribes to the player's ledger and card,
+    /// polls both as the ground truth, and plays one card meanwhile.
+    ProbePush {
         /// Play as this keypair rather than the admin.
         #[arg(long)]
         wallet: Option<PathBuf>,
@@ -501,7 +512,7 @@ async fn show_analytics(chain: &Chain, json: bool, watch: bool) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let chain = Chain::new(&cli.net)?;
+    let chain = Chain::connect(&cli.net).await?;
     let admin = chain.admin.pubkey();
     match cli.command {
         Command::Setup { house_fund, house_slots, jackpot_slots } => {
@@ -545,6 +556,11 @@ async fn main() -> Result<()> {
         Command::Play { cards, card, close, wallet: path } => {
             let wallet = wallet(&chain, path)?;
             play::play(&chain, &wallet, cards, card, close).await
+        }
+        Command::WatchLedger { who } => probe::watch_ledger(&chain, who).await,
+        Command::ProbePush { wallet: path } => {
+            let wallet = wallet(&chain, path)?;
+            probe::probe_push(&chain, &wallet).await
         }
         Command::Finish { wallet: path } => {
             let wallet = wallet(&chain, path)?;
