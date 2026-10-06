@@ -17,3 +17,9 @@ tools/sheet/analytics-history.*.jsonl
 
 # Test wallets the old JS harness kept here — never committed (the old set leaked and was rotated).
 scripts/.test-wallets.json
+
+# Secret keys never belong in a repository: they live in ~/keys (see .githooks/pre-commit).
+*keypair*.json
+*wallets*.json
+id.json
+*.key
