@@ -110,8 +110,8 @@ enum Command {
         jackpot_slots: u16,
     },
     /// Publishes the card sheet, one card per transaction, and — devnet, unless `--cards-only` —
-    /// creates any 0-decimal stand-in mint it names that does not exist yet. A retired slot is
-    /// rewritten as a copy of the last card: `card_count` never shrinks.
+    /// creates any 0-decimal stand-in mint it names that does not exist yet. Devnet publishes only
+    /// `DEVNET_CARDS`; slots past the sheet are taken off the shelf.
     Publish {
         #[arg(long)]
         sheet: Option<PathBuf>,
@@ -251,7 +251,7 @@ fn wallet(chain: &Chain, path: Option<PathBuf>) -> Result<Keypair> {
 async fn publish(chain: &Chain, path: PathBuf, cards_only: bool, force: bool) -> Result<()> {
     require_admin(chain)?;
     let mainnet = chain.net.mainnet;
-    let cards = sheet::load(&path)?;
+    let cards = sheet::for_cluster(sheet::load(&path)?, mainnet);
     let admin = chain.admin.pubkey();
     let mut mints = Mints::load(mainnet).or_else(|e| if mainnet { Err(e) } else { Ok(Mints::default()) })?;
     if !mainnet {
@@ -293,12 +293,11 @@ async fn publish(chain: &Chain, path: PathBuf, cards_only: bool, force: bool) ->
     for (index, card) in cards.iter().enumerate() {
         send(index, card, format!("card {}", card.id)).await?;
     }
-    // A retired slot must not keep selling its old card: `card_count` never shrinks, so a slot
-    // past the sheet becomes a copy of the last card. The app's shelf stops before it, and anyone
-    // buying the index directly just buys the same card twice over.
-    let last = cards.last().context("the sheet has no cards")?;
-    for index in cards.len()..count as usize {
-        send(index, last, format!("slot {index} retired (as {})", last.id)).await?;
+    if cards.len() < count as usize {
+        let set = scratch_cards::instructions::set_card_count::SetCardCount { count: cards.len() as u8 };
+        let ix = built(generated::ScratchCards::set_card_count_instruction(admin, config(), set))?;
+        let signature = chain.base.send(&[ix], &[&chain.admin]).await?;
+        println!("  ✅ shelf cut from {count} to {} cards  {}", cards.len(), short(signature));
     }
     if !mainnet && !cards_only {
         let mut record: Value = serde_json::from_str(&std::fs::read_to_string(sheet::devnet_path())?)?;
@@ -374,25 +373,17 @@ dry run — pass --go to close the strays");
 
 async fn verify(chain: &Chain, path: PathBuf) -> Result<()> {
     let mainnet = chain.net.mainnet;
-    let cards = sheet::load(&path)?;
+    let cards = sheet::for_cluster(sheet::load(&path)?, mainnet);
     let mints = Mints::load(mainnet)?;
     let account = chain.account(&config()).await?.context("no config account")?;
     let header = casino_ops::decode::<casino_core::shelf::Header>(&account.data).context("not a shelf")?;
     let (count, slots) = shelf(chain).await?;
     println!("config v{}, {count} cards on chain, {} in the sheet\n", header.version, cards.len());
     let mut bad = 0;
-    let last = cards.last().context("the sheet has no cards")?;
     for index in 0..(count as usize).max(cards.len()) {
         let Some(card) = cards.get(index) else {
-            // A retired slot is fine exactly when it duplicates the last card of the sheet.
-            let want = sheet::expected(&last.set_card(index as u8, &mints, mainnet)?);
-            let out = sheet::differences(&slots[index], &want, &mints);
-            if out.is_empty() {
-                println!("  slot {index}: retired (a copy of {})", last.id);
-            } else {
-                println!("  card {index}: on chain but not in the sheet ({} fields differ from {})", out.len(), last.id);
-                bad += 1;
-            }
+            println!("  card {index}: on chain but not in the sheet");
+            bad += 1;
             continue;
         };
         if index as u64 >= count {
@@ -405,9 +396,9 @@ async fn verify(chain: &Chain, path: PathBuf) -> Result<()> {
         let price = chain_card.price_lamports as f64 / 1e9;
         let hit = chain_card.jackpot_hit as f64 / (1u64 << 32) as f64;
         println!(
-            "  {:<9} {price:.4} SOL  jackpot {:.4}%  per SOL {:.3}%  {} blocks  {} pays  {} tiers  {} pool{}",
+            "  {:<9} {price:.4} SOL  jackpot {:.4}%  per SOL {:.3}%  {} blocks  {} pays  {} tiers  {} coins{}",
             card.id, hit * 100.0, hit / price * 100.0, chain_card.block_len, chain_card.pay_len, chain_card.tier_len,
-            chain_card.pool_len, if out.is_empty() { String::new() } else { format!("   {} DIFFER", out.len()) }
+            chain_card.token_len, if out.is_empty() { String::new() } else { format!("   {} DIFFER", out.len()) }
         );
         for line in &out {
             println!("      {line}");
@@ -540,10 +531,10 @@ async fn main() -> Result<()> {
         Command::Cards => {
             let mints = Mints::load(chain.net.mainnet).unwrap_or_default();
             for (index, card) in cards_on_chain(&chain).await?.iter().enumerate() {
-                let pool: Vec<String> = card.pool().iter().map(|e| mints.symbol(&Pubkey::new_from_array(e.mint))).collect();
+                let coins: Vec<String> = card.tokens().iter().map(|m| mints.symbol(&Pubkey::new_from_array(*m))).collect();
                 println!(
-                    "{index}  {} SOL  mode {} roll {}  {} blocks {} pays {} tiers  pool {}",
-                    sol(card.price_lamports), card.mode, card.roll, card.block_len, card.pay_len, card.tier_len, pool.join(" ")
+                    "{index}  {} SOL  mode {} roll {}  {} blocks {} pays {} tiers  coins {}",
+                    sol(card.price_lamports), card.mode, card.roll, card.block_len, card.pay_len, card.tier_len, coins.join(" ")
                 );
             }
             Ok(())
@@ -657,15 +648,16 @@ mod tests {
     /// `setup-devnet.mjs`'s `setCardIx`, ported as it was, against the generated `set_card`.
     #[test]
     fn a_published_card_is_the_bytes_the_script_sent() {
-        let cards = sheet::load(&sheet::sheet_path()).unwrap();
         let mints = Mints::load(false).unwrap();
         for mainnet in [false, true] {
+            let cards = sheet::for_cluster(sheet::load(&sheet::sheet_path()).unwrap(), mainnet);
             for (index, c) in cards.iter().enumerate() {
-                let weights = sheet::pool_weights(c, mainnet).unwrap();
+                let rows = sheet::prize_rows(c, mainnet).unwrap();
                 let mut want = 9u64.to_le_bytes().to_vec();
                 let mode = ["count", "compare"].iter().position(|m| *m == c.mode).unwrap() as u8;
                 let roll = ["exclusive", "independent"].iter().position(|r| *r == c.roll).unwrap() as u8;
-                want.extend_from_slice(&[index as u8, mode, roll]);
+                let kind = sheet::KINDS.iter().position(|k| *k == c.id).unwrap() as u8 + 1;
+                want.extend_from_slice(&[index as u8, mode, roll, kind]);
                 want.extend_from_slice(&c.price_lamports.to_le_bytes());
                 want.extend_from_slice(&c.jackpot_hit_weight.to_le_bytes());
                 want.extend_from_slice(&c.jackpot_near_weight.to_le_bytes());
@@ -691,15 +683,21 @@ mod tests {
                     want.extend_from_slice(&t.factor.to_le_bytes());
                     want.extend_from_slice(&t.weight.to_le_bytes());
                 }
-                want.extend_from_slice(&(c.pool.len() as u32).to_le_bytes());
-                for (e, weight) in c.pool.iter().zip(&weights) {
-                    want.extend_from_slice(mints.mint(&e.token).unwrap().as_ref());
-                    want.extend_from_slice(&e.amount.to_le_bytes());
-                    want.extend_from_slice(&weight.to_le_bytes());
+                want.extend_from_slice(&(c.tokens.len() as u32).to_le_bytes());
+                for t in &c.tokens {
+                    want.extend_from_slice(mints.mint(t).unwrap().as_ref());
+                }
+                want.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+                for r in &rows {
+                    want.extend_from_slice(&r.weight.to_le_bytes());
+                    want.extend_from_slice(&(r.amounts.len() as u32).to_le_bytes());
+                    for a in &r.amounts {
+                        want.extend_from_slice(&a.to_le_bytes());
+                    }
                 }
                 let admin = Pubkey::new_from_array([1; 32]);
                 let set = c.set_card(index as u8, &mints, mainnet).unwrap();
-                set.validate().unwrap();
+                set.validate().unwrap_or_else(|e| panic!("{} mainnet={mainnet}: {e:?}", c.id));
                 let ix = generated::ScratchCards::set_card_instruction(admin, config(), SYSTEM_PROGRAM, set).unwrap();
                 assert_eq!(ix.data, want, "card {}", c.id);
             }
@@ -763,12 +761,14 @@ mod tests {
     }
 
     #[test]
-    fn a_devnet_pool_pays_sol_alone() {
-        let cards = sheet::load(&sheet::sheet_path()).unwrap();
+    fn a_devnet_card_pays_sol_alone() {
+        let cards = sheet::for_cluster(sheet::load(&sheet::sheet_path()).unwrap(), false);
         for card in &cards {
-            let weights = sheet::pool_weights(card, false).unwrap();
-            let total: u64 = weights.iter().map(|w| *w as u64).sum();
-            assert_eq!(total, 1 << 32, "{}", card.id);
+            let sol = card.tokens.iter().position(|t| t == "SOL").unwrap();
+            for row in sheet::prize_rows(card, false).unwrap() {
+                let paid: Vec<usize> = (0..row.amounts.len()).filter(|&t| row.amounts[t] > 0).collect();
+                assert_eq!(paid, vec![sol], "{}", card.id);
+            }
         }
     }
 

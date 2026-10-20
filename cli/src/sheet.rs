@@ -4,15 +4,15 @@
 //!
 //! Amounts go on chain exactly as the sheet holds them, in mainnet base units on both clusters:
 //! the devnet stand-in mints are 0-decimal throwaways, but publishing the same integers on devnet
-//! that mainnet will hold is the whole point of rehearsing there. What differs by cluster is the
-//! pool's weights: devnet pays SOL alone, so the house there needs no token float at all.
+//! that mainnet will hold is the whole point of rehearsing there. What differs by cluster is which
+//! coins a tier pays: devnet pays SOL alone, so the house there needs no token float at all.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use casino_ops::Pubkey;
-use scratch_cards::instructions::set_card::{InitBlock, InitPay, InitPoolEntry, InitTier, SetCard};
+use scratch_cards::instructions::set_card::{InitBlock, InitPay, InitPrizeRow, InitTier, SetCard};
 use scratch_cards::state::config::*;
 use serde::Deserialize;
 use serde_json::Value;
@@ -67,6 +67,13 @@ pub struct PoolEntry {
     pub amount: u64,
 }
 
+/// One prize tier: its draw weight and each coin's amount there, in `tokens` order; zero = not offered.
+#[derive(Deserialize, Debug, Clone)]
+pub struct PrizeRow {
+    pub weight: u32,
+    pub amounts: Vec<u64>,
+}
+
 /// One card as the balancing tool writes it.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -81,12 +88,36 @@ pub struct Card {
     pub blocks: Vec<Block>,
     pub pays: Vec<Pay>,
     pub tiers: Vec<Tier>,
+    #[serde(default)]
+    pub tokens: Vec<String>,
+    /// low, mid, high, top
+    #[serde(default)]
+    pub prizes: Vec<PrizeRow>,
+    #[serde(default)]
     pub pool: Vec<PoolEntry>,
 }
 
 pub fn load(path: &Path) -> Result<Vec<Card>> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("{} is not a card sheet", path.display()))
+    let mut cards: Vec<Card> = serde_json::from_str(&text).with_context(|| format!("{} is not a card sheet", path.display()))?;
+    for card in &mut cards {
+        if card.prizes.is_empty() {
+            card.tiers_from_pool()?;
+        }
+    }
+    Ok(cards)
+}
+
+/// Card kinds, in the order the apps' copy table lists them; a card's `kind` byte is its position + 1.
+pub const KINDS: [&str; 4] = ["straight", "triple", "five", "vault"];
+
+/// The cards devnet publishes. Devnet pays SOL alone, so each tier offers one coin and a card has
+/// four distinct plates — too few for triple and vault to fill a losing card without a match.
+pub const DEVNET_CARDS: [&str; 2] = ["straight", "five"];
+
+/// The sheet as this cluster publishes it, in sheet order.
+pub fn for_cluster(cards: Vec<Card>, mainnet: bool) -> Vec<Card> {
+    cards.into_iter().filter(|c| mainnet || DEVNET_CARDS.contains(&c.id.as_str())).collect()
 }
 
 /// The payout tokens, by the symbol the sheet names them with.
@@ -164,24 +195,28 @@ impl Prices {
     }
 }
 
-/// The pool's weights as published on this cluster. Mainnet takes the sheet's own. Devnet pays
-/// SOL alone: the pool must partition 2^32 exactly and one `u32` cannot hold that, so the SOL rung
-/// carries 2^32 − 1 and the first token rung the leftover 1 — a once-in-4.3-billion hit, never
-/// funded.
-pub fn pool_weights(card: &Card, mainnet: bool) -> Result<Vec<u32>> {
+/// The prize tiers as published on this cluster. Mainnet takes the sheet's own. Devnet pays SOL
+/// alone: every tier keeps only its SOL amount, so the stand-in coins still fill the jackpot line
+/// but no win ever pays one.
+pub fn prize_rows(card: &Card, mainnet: bool) -> Result<Vec<PrizeRow>> {
     if mainnet {
-        return Ok(card.pool.iter().map(|e| e.weight).collect());
+        return Ok(card.prizes.clone());
     }
-    if !card.pool.iter().any(|e| e.token == "SOL") {
-        bail!("{}: no SOL rung to carry the devnet pool", card.id);
-    }
-    let first_token = card.pool.iter().position(|e| e.token != "SOL");
-    Ok(card
-        .pool
+    let Some(sol) = card.tokens.iter().position(|t| t == "SOL") else {
+        bail!("{}: no SOL coin to carry the devnet prizes", card.id);
+    };
+    card.prizes
         .iter()
         .enumerate()
-        .map(|(i, e)| if e.token == "SOL" { u32::MAX } else if Some(i) == first_token { 1 } else { 0 })
-        .collect())
+        .map(|(r, row)| {
+            if row.weight > 0 && row.amounts[sol] == 0 {
+                bail!("{}: tier {r} offers no SOL to pay on devnet", card.id);
+            }
+            let mut amounts = vec![0; row.amounts.len()];
+            amounts[sol] = row.amounts[sol];
+            Ok(PrizeRow { weight: row.weight, amounts })
+        })
+        .collect()
 }
 
 fn role(name: &str) -> Result<u8> {
@@ -195,11 +230,36 @@ fn role(name: &str) -> Result<u8> {
 }
 
 impl Card {
+    /// Stand-in tiers for a sheet still in the old pool shape, until it is re-tuned for tiers:
+    /// every coin in low/mid/high at x1/x8/x64 of its pool amount, SOL alone in top at x1000.
+    fn tiers_from_pool(&mut self) -> Result<()> {
+        let Some(sol) = self.pool.iter().position(|e| e.token == "SOL") else {
+            bail!("{}: no SOL in the pool to carry the top tier", self.id);
+        };
+        self.tokens = self.pool.iter().map(|e| e.token.clone()).collect();
+        let shares = [0.70, 0.20, 0.09];
+        let mut left = WEIGHT_TOTAL;
+        for (r, share) in shares.iter().enumerate() {
+            let weight = (WEIGHT_TOTAL as f64 * share) as u64;
+            left -= weight;
+            let amounts = self.pool.iter().map(|e| e.amount << (3 * r)).collect();
+            self.prizes.push(PrizeRow { weight: weight as u32, amounts });
+        }
+        let mut top = vec![0; self.pool.len()];
+        top[sol] = self.pool[sol].amount * 1000;
+        self.prizes.push(PrizeRow { weight: left as u32, amounts: top });
+        Ok(())
+    }
+
     /// The program's `SetCard` for publishing this card at `index` on this cluster.
     pub fn set_card(&self, index: u8, mints: &Mints, mainnet: bool) -> Result<SetCard> {
-        let weights = pool_weights(self, mainnet)?;
+        let rows = prize_rows(self, mainnet)?;
+        let Some(kind) = KINDS.iter().position(|k| *k == self.id) else {
+            bail!("{}: not a card kind the apps know ({KINDS:?})", self.id);
+        };
         Ok(SetCard {
             index,
+            kind: kind as u8 + 1,
             mode: match self.mode.as_str() {
                 "count" => MODE_COUNT,
                 "compare" => MODE_COMPARE,
@@ -221,12 +281,8 @@ impl Card {
                 .collect::<Result<_>>()?,
             pays: self.pays.iter().map(|p| InitPay { scope: p.scope, weight: p.weight, min: p.min, flags: p.flags, mult: p.mult }).collect(),
             tiers: self.tiers.iter().map(|t| InitTier { factor: t.factor, weight: t.weight }).collect(),
-            pool: self
-                .pool
-                .iter()
-                .zip(weights)
-                .map(|(e, weight)| Ok(InitPoolEntry { mint: mints.mint(&e.token)?.to_bytes(), amount: e.amount, weight }))
-                .collect::<Result<_>>()?,
+            tokens: self.tokens.iter().map(|t| Ok(mints.mint(t)?.to_bytes())).collect::<Result<_>>()?,
+            prizes: rows.into_iter().map(|r| InitPrizeRow { weight: r.weight, amounts: r.amounts }).collect(),
         })
     }
 }
@@ -239,10 +295,11 @@ pub fn expected(set: &SetCard) -> CardConfig {
     card.jackpot_near = set.jackpot_near;
     card.mode = set.mode;
     card.roll = set.roll;
+    card.kind = set.kind;
     card.block_len = set.blocks.len() as u8;
     card.pay_len = set.pays.len() as u8;
     card.tier_len = set.tiers.len() as u8;
-    card.pool_len = set.pool.len() as u8;
+    card.token_len = set.tokens.len() as u8;
     card.mode_args = set.mode_args;
     for (dst, b) in card.blocks.iter_mut().zip(&set.blocks) {
         *dst = scratch_cards::state::config::Block { role: b.role, count: b.count, cols: b.cols, flags: b.flags, a: b.a, b: b.b };
@@ -253,8 +310,10 @@ pub fn expected(set: &SetCard) -> CardConfig {
     for (dst, t) in card.tiers.iter_mut().zip(&set.tiers) {
         *dst = scratch_cards::state::config::Tier { factor: t.factor, weight: t.weight };
     }
-    for (dst, e) in card.pool.iter_mut().zip(&set.pool) {
-        *dst = scratch_cards::state::config::PoolEntry { mint: e.mint, amount: e.amount, weight: e.weight, _pad: 0 };
+    card.tokens[..set.tokens.len()].copy_from_slice(&set.tokens);
+    for (dst, r) in card.rows.iter_mut().zip(&set.prizes) {
+        dst.weight = r.weight;
+        dst.amounts[..r.amounts.len()].copy_from_slice(&r.amounts);
     }
     card
 }
@@ -274,11 +333,12 @@ pub fn differences(chain: &CardConfig, want: &CardConfig, mints: &Mints) -> Vec<
     check("jackpot near".into(), chain.jackpot_near.to_string(), want.jackpot_near.to_string());
     check("mode".into(), chain.mode.to_string(), want.mode.to_string());
     check("roll".into(), chain.roll.to_string(), want.roll.to_string());
+    check("kind".into(), chain.kind.to_string(), want.kind.to_string());
     check("mode args".into(), format!("{:?}", chain.mode_args), format!("{:?}", want.mode_args));
     check("blocks".into(), chain.block_len.to_string(), want.block_len.to_string());
     check("pays".into(), chain.pay_len.to_string(), want.pay_len.to_string());
     check("tiers".into(), chain.tier_len.to_string(), want.tier_len.to_string());
-    check("pool".into(), chain.pool_len.to_string(), want.pool_len.to_string());
+    check("coins".into(), chain.token_len.to_string(), want.token_len.to_string());
     for (i, (a, b)) in chain.blocks().iter().zip(want.blocks()).enumerate() {
         let show = |x: &scratch_cards::state::config::Block| format!("role {} count {} cols {} flags {} a {} b {}", x.role, x.count, x.cols, x.flags, x.a, x.b);
         check(format!("block {i}"), show(a), show(b));
@@ -290,11 +350,13 @@ pub fn differences(chain: &CardConfig, want: &CardConfig, mints: &Mints) -> Vec<
     for (i, (a, b)) in chain.tiers().iter().zip(want.tiers()).enumerate() {
         check(format!("tier {i}"), format!("×{} weight {}", a.factor, a.weight), format!("×{} weight {}", b.factor, b.weight));
     }
-    for (i, (a, b)) in chain.pool().iter().zip(want.pool()).enumerate() {
-        let show = |x: &scratch_cards::state::config::PoolEntry| {
-            format!("{} {} weight {}", mints.symbol(&Pubkey::new_from_array(x.mint)), x.amount, x.weight)
-        };
-        check(format!("pool {i}"), show(a), show(b));
+    for (i, (a, b)) in chain.tokens().iter().zip(want.tokens()).enumerate() {
+        let show = |m: &[u8; 32]| mints.symbol(&Pubkey::new_from_array(*m));
+        check(format!("coin {i}"), show(a), show(b));
+    }
+    for (r, (a, b)) in chain.rows.iter().zip(&want.rows).enumerate() {
+        let show = |x: &scratch_cards::state::config::PrizeRow| format!("weight {} amounts {:?}", x.weight, x.amounts);
+        check(format!("prize tier {r}"), show(a), show(b));
     }
     if out.is_empty() && bytemuck::bytes_of(chain) != bytemuck::bytes_of(want) {
         out.push("bytes differ outside the named fields".into());
@@ -307,8 +369,8 @@ pub fn differences(chain: &CardConfig, want: &CardConfig, mints: &Mints) -> Vec<
 /// An exclusive roll pays one rung, so the worst is the dearest multiplier. An independent roll is
 /// one draw per rung, and every rung can hit in the same deal and land the same token, so the
 /// worst is the sum of the multipliers — sampling always undershot that tail, which is exactly the
-/// wrong direction for sizing a float. Zero-weight rungs and pool entries cannot hit and are left
-/// out, which is also what keeps the devnet answer SOL-only.
+/// wrong direction for sizing a float. Zero-weight rungs and tiers, and coins a tier doesn't offer,
+/// cannot hit and are left out, which is also what keeps the devnet answer SOL-only.
 pub fn worst_cases(cards: &[CardConfig], mints: &Mints) -> BTreeMap<String, u128> {
     let mut worst = BTreeMap::new();
     for card in cards {
@@ -323,11 +385,13 @@ pub fn worst_cases(cards: &[CardConfig], mints: &Mints) -> BTreeMap<String, u128
         }
         let factor = if card.roll == ROLL_INDEPENDENT { mults.iter().sum() } else { *mults.iter().max().unwrap() };
         let top_tier = card.tiers().iter().filter(|t| t.weight > 0).map(|t| t.factor as u128).max().unwrap_or(1).max(1);
-        for entry in card.pool().iter().filter(|e| e.weight > 0) {
-            let symbol = mints.symbol(&Pubkey::new_from_array(entry.mint));
-            let amount = entry.amount as u128 * factor * top_tier;
+        for (t, mint) in card.tokens().iter().enumerate() {
+            let Some(dearest) = card.rows.iter().filter(|r| r.weight > 0).map(|r| r.amounts[t]).max().filter(|a| *a > 0) else {
+                continue;
+            };
+            let symbol = mints.symbol(&Pubkey::new_from_array(*mint));
             let slot = worst.entry(symbol).or_insert(0);
-            *slot = (*slot).max(amount);
+            *slot = (*slot).max(dearest as u128 * factor * top_tier);
         }
     }
     worst
