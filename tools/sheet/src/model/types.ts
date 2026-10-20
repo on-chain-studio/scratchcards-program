@@ -4,9 +4,10 @@ export const TOTAL = 2 ** 32
 
 export const MAX_TOKENS = 12
 export const PRIZE_ROWS = 4
-/** The frame each tier id is drawn in, around the coin. */
-export const TIER_NAMES = ['coin', 'group', 'stack', 'sack'] as const
-export const SACK = 3
+/** How each tier id is drawn: a coin, a fan of notes, a sack, a falling star. */
+export const TIER_NAMES = ['coin', 'notes', 'sack', 'star'] as const
+/** the top tier: the SOL headline */
+export const STAR = 3
 export const MAX_BLOCKS = 8
 export const MAX_PAYS = 32
 export const MAX_TIERS = 4

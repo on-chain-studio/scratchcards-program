@@ -106,7 +106,7 @@ export function PrizeTable({
             {spare.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-            offered in every tier but the sack, at each tier's value
+            offered in every tier but the star, at each tier's value
           </span>
         </div>
       )}

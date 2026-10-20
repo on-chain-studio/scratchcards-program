@@ -84,7 +84,7 @@ pub struct Tier {
 pub struct PrizeRow {
     /// Out of `WEIGHT_TOTAL`, across the card's rows. A lone row is always the prize and holds 0.
     pub weight:  u32,
-    /// The frame: 0 coin, 1 group, 2 stack, 3 sack. The engine never reads it.
+    /// How the apps draw it: 0 coin, 1 notes, 2 sack, 3 star. The engine never reads it.
     pub tier:    u8,
     pub _pad:    [u8; 3],
     pub amounts: [u64; MAX_TOKENS],

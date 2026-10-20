@@ -1,5 +1,5 @@
 import {
-  Card, TOTAL, MAX_TOKENS, PRIZE_ROWS, TIER_NAMES, SACK, MAX_BLOCKS, MAX_PAYS, MAX_TIERS, MAX_CELLS,
+  Card, TOTAL, MAX_TOKENS, PRIZE_ROWS, TIER_NAMES, STAR, MAX_BLOCKS, MAX_PAYS, MAX_TIERS, MAX_CELLS,
   CELL_PAYLOAD_MAX, MARKED, offered, popcount, cellsOf, bodyLen, cellCount, disjoint,
   jackpotHitFor, JACKPOT_SHARE,
 } from './types'
@@ -77,11 +77,11 @@ export function validate(card: Card): Check[] {
   const empty = card.prizes.map(r => ((r.weight > 0 || lone) && !offered(r).length ? TIER_NAMES[r.tier] : '')).filter(Boolean)
   add(empty.length === 0, 'every drawable tier offers a coin',
     empty.length ? `${empty.join(', ')} can be drawn with nothing to pay` : 'ok')
-  // House policy, not a program rule: the sack is the SOL headline.
-  const sack = card.prizes.find(r => r.tier === SACK)
-  const sackCoins = sack ? offered(sack).map(t => card.tokens[t]) : []
-  add(!sack || (sackCoins.length === 1 && sackCoins[0] === 'SOL'), 'the sack pays SOL alone',
-    sack ? (sackCoins.join(', ') || 'offers nothing') : 'no sack on this card')
+  // House policy, not a program rule: the star is the SOL headline.
+  const star = card.prizes.find(r => r.tier === STAR)
+  const starCoins = star ? offered(star).map(t => card.tokens[t]) : []
+  add(!star || (starCoins.length === 1 && starCoins[0] === 'SOL'), 'the star pays SOL alone',
+    star ? (starCoins.join(', ') || 'offers nothing') : 'no star on this card')
   add(card.blocks.length >= 1 && card.blocks.length <= MAX_BLOCKS,
     `blocks ≤ ${MAX_BLOCKS}`, `${card.blocks.length} blocks`)
   add(card.pays.length >= 1 && card.pays.length <= MAX_PAYS,

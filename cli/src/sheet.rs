@@ -64,7 +64,7 @@ pub struct Tier {
 #[derive(Deserialize, Debug, Clone)]
 pub struct PrizeRow {
     pub weight: u32,
-    /// the frame the apps draw: 0 coin, 1 group, 2 stack, 3 sack
+    /// how the apps draw it: 0 coin, 1 notes, 2 sack, 3 star
     pub tier: u8,
     pub amounts: Vec<u64>,
 }

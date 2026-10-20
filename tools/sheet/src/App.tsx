@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import rawPrices from '@prices'
 import { onDisk, seed, readDraft, writeDraft, clearDraft, saveToDisk, same,
   designOnDisk, readDesign, writeDesign, clearDesign, saveDesign, readPick, writePick } from './model/store'
-import { Card, Block, Pay, Design, TARGET_RTP, TOTAL, SACK, DEFAULT_LADDER, normalize, bodyLen, popcount, settleRoll, jackpotHitFor } from './model/types'
+import { Card, Block, Pay, Design, TARGET_RTP, TOTAL, STAR, DEFAULT_LADDER, normalize, bodyLen, popcount, settleRoll, jackpotHitFor } from './model/types'
 import { analyse, Prices } from './model/analytics'
 import { validate } from './model/validate'
 import { toAuthoring, toJson } from './model/encode'
@@ -203,13 +203,13 @@ export function App() {
   const offerCoin = (r: number, t: number, on: boolean) =>
     patch(withAmount(r, t, on ? matchingAmount(card, PRICES, card.tokens[t], r) : 0))
 
-  /** A new coin arrives in every tier but the sack, at about what each tier pays. */
+  /** A new coin arrives in every tier but the star, at about what each tier pays. */
   const addToken = (token: string) => {
     patch({
       ...card,
       tokens: [...card.tokens, token],
       prizes: card.prizes.map((row, r) => ({
-        ...row, amounts: [...row.amounts, row.tier === SACK ? 0 : matchingAmount(card, PRICES, token, r)],
+        ...row, amounts: [...row.amounts, row.tier === STAR ? 0 : matchingAmount(card, PRICES, token, r)],
       })),
     })
   }
