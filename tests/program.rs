@@ -162,7 +162,7 @@ fn retired_numbers_are_no_ops_too() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_past_the_list_are_invalid_data() {
     let table = Table::new();
-    for retired in [34u64, 35, 255, 1 << 40] {
+    for retired in [33u64, 34, 255, 1 << 40] {
         let mut instruction = table.reveal(vrf_identity(), &[]);
         instruction.data[..8].copy_from_slice(&retired.to_le_bytes());
         let result = mollusk().process_instruction(
@@ -224,54 +224,3 @@ fn another_ledger_is_not_the_pot() {
     assert_eq!(result.raw_result, Err(InstructionError::Custom(CoreError::InvalidPDA as u32)));
 }
 
-/// A shelf publishing `count` of its four slots.
-fn shelf(count: u64) -> (Pubkey, Account) {
-    use scratch_cards::state::config::{self, Config};
-    let (address, _) = Pubkey::find_program_address(&[b"config"], &program());
-    let mut data = vec![0u8; Config::size_for(4)];
-    data[..8].copy_from_slice(&config::DISCRIMINATOR.to_le_bytes());
-    data[8..16].copy_from_slice(&config::VERSION.to_le_bytes());
-    data[48..56].copy_from_slice(&count.to_le_bytes());
-    (address, Account { lamports: 1_000_000_000, data, owner: program(), executable: false, rent_epoch: 0 })
-}
-
-fn set_card_count(admin: Pubkey, config: Pubkey, count: u8) -> Instruction {
-    Instruction::new_with_bytes(
-        program(),
-        &input(33, &[count]),
-        vec![AccountMeta::new_readonly(admin, true), AccountMeta::new(config, false)],
-    )
-}
-
-fn published(accounts: &[(Pubkey, Account)], config: Pubkey) -> u64 {
-    let (_, account) = accounts.iter().find(|(k, _)| *k == config).unwrap();
-    u64::from_le_bytes(account.data[48..56].try_into().unwrap())
-}
-
-#[test]
-#[ignore = "needs cargo build-sbf"]
-fn the_admin_takes_cards_off_the_end() {
-    let admin = key(casino_core::ids::OPS_KEY.to_bytes());
-    let (config, account) = shelf(4);
-    let result = mollusk().process_instruction(&set_card_count(admin, config, 2), &[(admin, wallet()), (config, account)]);
-    assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(published(&result.resulting_accounts, config), 2);
-}
-
-#[test]
-#[ignore = "needs cargo build-sbf"]
-fn the_count_cannot_be_raised_past_what_was_published() {
-    let admin = key(casino_core::ids::OPS_KEY.to_bytes());
-    let (config, account) = shelf(2);
-    let result = mollusk().process_instruction(&set_card_count(admin, config, 3), &[(admin, wallet()), (config, account)]);
-    assert!(result.raw_result.is_err());
-}
-
-#[test]
-#[ignore = "needs cargo build-sbf"]
-fn only_the_admin_sets_the_count() {
-    let stranger = Pubkey::new_unique();
-    let (config, account) = shelf(4);
-    let result = mollusk().process_instruction(&set_card_count(stranger, config, 0), &[(stranger, wallet()), (config, account)]);
-    assert_eq!(result.raw_result, Err(InstructionError::MissingRequiredSignature));
-}

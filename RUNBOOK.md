@@ -92,11 +92,13 @@ earlier run left mid-flow is finished first (`scratch-ops finish` does only that
 ### Retiring or adding a card
 
 A card names its kind on chain (`kind`, its position in `KINDS` + 1), and the app names a
-card by that, never by its slot — so the shelf can drop, add or reorder cards without an
-app release. To retire one: delete it from `cards.json` and `design.json` and republish;
-`publish` cuts slots past the sheet with `SetCardCount` before it writes, so a retired card
-is never on sale while the rest lands. Its `CardDef` in `Cards.ALL` (`Symbols.kt`) can stay
-until the next app release; a kind the app has no text for is skipped by the shop.
+card by that, never by its slot — so the shelf can add or reorder cards without an app
+release. The shelf never shrinks except when it is re-stamped, so a card is retired by
+overwriting its slot: delete it from `cards.json` and `design.json`, and the cards after it
+move up a slot on the next `publish`; a slot past the end of the sheet keeps its old card on
+sale until it is overwritten or the shelf is re-stamped (`publish` says so). Its `CardDef` in
+`Cards.ALL` (`Symbols.kt`) can stay until the next app release; a kind the app has no text
+for is skipped by the shop.
 
 Devnet publishes `DEVNET_CARDS` only (straight and five): devnet pays SOL alone, every tier
 offers one coin, and four plates cannot fill a losing triple or vault.

@@ -116,7 +116,8 @@ enum Command {
     },
     /// Publishes the card sheet, one card per transaction, and — devnet, unless `--cards-only` —
     /// creates any 0-decimal stand-in mint it names that does not exist yet. Devnet publishes only
-    /// `DEVNET_CARDS`; slots past the sheet are taken off the shelf.
+    /// `DEVNET_CARDS`. Slots past the sheet are left as they are: the shelf only shrinks when it
+    /// is re-stamped.
     Publish {
         #[arg(long)]
         sheet: Option<PathBuf>,
@@ -316,15 +317,9 @@ async fn publish(chain: &Chain, path: PathBuf, cards_only: bool, force: bool) ->
     require_current(chain).await?;
     println!("writing the card sheet…");
     let (count, slots) = shelf(chain).await?;
-    // Cut first: a slot past the sheet must not stay on sale while the rest is written, nor be
-    // left on sale by a write that fails part-way.
     if cards.len() < count as usize {
-        let set = scratch_cards::instructions::set_card_count::SetCardCount { count: cards.len() as u8 };
-        let ix = built(generated::ScratchCards::set_card_count_instruction(admin, config(), set))?;
-        let signature = chain.base.send(&[ix], &[&chain.admin]).await?;
-        println!("  ✅ shelf cut from {count} to {} cards  {}", cards.len(), short(signature));
+        println!("  ⚠  {} card(s) past the sheet stay on sale: the shelf only shrinks when it is re-stamped", count as usize - cards.len());
     }
-    let count = count.min(cards.len() as u64);
     let send = async |index: usize, card: &sheet::Card, label: String| -> Result<()> {
         let set = card.set_card(index as u8, &mints, mainnet)?;
         set.validate().map_err(|e| anyhow::anyhow!("{}: the program would refuse it ({e:?})", card.id))?;

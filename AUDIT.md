@@ -53,11 +53,11 @@ Scope: `scratch-cards-program/src` (all instructions, state, utils), `engine/src
 > takes v2's own single `rng.pick` (fuzz: 3000 random publishable v2 cards × 200 seeds, 0
 > mismatches) — and found: a bare `Initialize` could re-stamp a v2 shelf with its 5 cards still
 > on sale at misread prices (now the program empties a shelf it re-stamps, tested on the live
-> bytes); `publish`/`verify` on an un-restamped shelf cut a live slot before failing (now refused
+> bytes; `SetCardCount` is gone); `publish`/`verify` on an un-restamped shelf cut a live slot before failing (now refused
 > with the remedy); the app's "WIN UP TO" on the live v2 shelf headlined the cheapest coin (now
 > the rarest-weighted). Not covered by any test here: a returning mainnet player's first purchase
-> after the restamp closes a 1096-byte card and recreates it at 1416 in one instruction — tried
-> on the devnet TEE, see the runbook.
+> after the restamp resizes a 1096-byte card to 1416 in place (one Magic CPI; it was close-then-
+> create on one address, which nothing local can run).
 
 Each item below is self-contained — location, what breaks, and what to do — so they can be
 taken in any order. Severity order is the recommended order.

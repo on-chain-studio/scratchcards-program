@@ -62,10 +62,11 @@ impl ResolvePurchase {
         let terms = config::shelf_card(config_account, card_id)?;
 
         // A card holds its terms at their own layout, so one bought under the other layout is
-        // re-made at this one's size.
+        // resized to this one's — in place, so its permission stays with it.
         let size = Card::persistent_size(&terms);
         if card_account.data_len() != 0 && card_account.data_len() != size {
-            receipt::close(magic_program, house, card_account, ephemeral_vault, house_bump)?;
+            casino_core::magicblock::resize_ephemeral_account(house, card_account, ephemeral_vault, magic_program,
+                size as u32, &[&[b"house", &[house_bump]]])?;
         }
         if card_account.data_len() == 0 {
             create_ephemeral_account(house, card_account, ephemeral_vault, magic_program,

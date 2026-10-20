@@ -26,7 +26,7 @@ and creates nothing, which is what makes the flow safe to retry.
 
 | PDA | What |
 | --- | --- |
-| `["config"]` | The shelf: every card's blocks, pay table, coins, prize tiers, chances — all public. Grows; `SetCardCount` takes cards off the end. |
+| `["config"]` | The shelf: every card's blocks, pay table, coins, prize tiers, chances — all public. Grows as cards are published; empties when re-stamped at a new layout. |
 | `["house"]` | The game's own payer inside the rollup: sponsors each card's ephemeral rent and the VRF fee. Owns the house ledger (the payout float). Delegated to the TEE. |
 | `["jackpot"]` | Owns the jackpot ledger — the progressive pot, fed 10% of every sale. The PDA itself stays on basenet; its ledger is public and delegated. |
 | `["analytics"]` | Lifetime counters — sales, jackpots, payouts per mint — written only by the settle callbacks, so every number is settled money. Delegated; TEE reads restricted to the admins. |
@@ -46,14 +46,13 @@ no-op (the TEE admission probes send it), and so is every retired gap (5, 6, 8, 
 | 1 | Initialize | Admin, idempotent: config shelf + house/jackpot/analytics PDAs, and the analytics TEE permission (created once, never rewritten — an update drops the program from it on the TEE). Re-run after a layout change, it re-stamps the shelf's version and grows it to the new stride; it never lowers the card count. |
 | 2/3/4 | Delegate / Undelegate / RequestUndelegation | Admin-gated (the ops key alone, as every admin instruction here); any game PDA (house, analytics) to the TEE. |
 | 7 | CloseCard | Admin escape hatch for a stranded card; rent returns to the house. |
-| 9 | SetCard | Admin: one card of the sheet, rewritten in place or appended. |
-| 33 | SetCardCount | Admin: takes cards off the end of the shelf. Lower only — raising would publish stale bytes. |
+| 9 | SetCard | Admin: one card of the sheet, rewritten in place or appended; grows the shelf as needed. |
 | 12 | CallbackReveal | The VRF's identity scoped to this program (`["identity", program]` at the VRF program) writes the 32-byte seed; status → Revealed. Scratching is pure client. |
 | 15–22, 30 | Ledger ops | Open / delegate / close / authorize / privacy / undelegate the house and jackpot ledgers; WithdrawHouse (17); ReadJackpot (21). Admin-gated. |
 | 24 | RequestPurchase | Session key consents. Receipt: price − take → house, take (10%) → jackpot. Callback = 27. |
 | 25 | RequestCollect | Evaluates the revealed card under its own terms, at whichever layout it was sold in. Receipt: winnings house → player per coin, pot → player on a jackpot line. Callback = 29. |
 | 26 | GrowConfig | Admin: grow the shelf. |
-| 27 | ResolvePurchase | Settle callback: creates the ephemeral card, or reuses a collected one, with its terms; creates the card's private ER permission, or adds its missing members (the wallet, the vault and the casino floor as full readers); counts the sale in analytics. |
+| 27 | ResolvePurchase | Settle callback: creates the ephemeral card, or reuses a collected one (resized in place if its terms were another layout's), with its terms; creates the card's private ER permission, or adds its missing members (the wallet, the vault and the casino floor as full readers); counts the sale in analytics. |
 | 28 | RequestReveal | Permissionless and retryable (from Bought *or* Requested): a scoped, high-priority request to MagicBlock VRF. |
 | 29 | ResolveCollect | Settle callback: marks the card collected; counts the payout in analytics. |
 | 31 | CloseStrayCard | Admin: drops a card of a layout this program no longer reads, by address; a v2- or v3-size card is a live ticket and refused. |
