@@ -108,9 +108,9 @@ enum Command {
         house_slots: u16,
         #[arg(long, default_value_t = 4)]
         jackpot_slots: u16,
-        /// After an upgrade that changes the shelf's layout: take every card off the shelf and
-        /// re-stamp the version, in one transaction, so no card is ever read at the wrong stride
-        /// and nothing can be bought until `publish` puts the sheet back.
+        /// After an upgrade that changes the shelf's layout: re-stamp the shelf. The program empties
+        /// it in the same instruction, so no card is ever read at the wrong stride and nothing can
+        /// be bought until `publish` puts the sheet back. Refused on a shelf already at this layout.
         #[arg(long)]
         restamp: bool,
     },
@@ -231,6 +231,24 @@ fn built(result: solarium_client::result::Result<Instruction>) -> Result<Instruc
 }
 
 /// The config's header and every slot it has room for.
+/// The layout the shelf is stamped with.
+async fn stamped(chain: &Chain) -> Result<u64> {
+    let account = chain.account(&config()).await?.context("no config on chain — run `setup`")?;
+    let header: casino_core::shelf::Header = casino_ops::decode(&account.data).context("the config is not a shelf")?;
+    Ok(header.version)
+}
+
+/// Refuses to touch a shelf stamped with another layout: the program would refuse every `SetCard`
+/// anyway, but not before a cut had changed the live shelf.
+async fn require_current(chain: &Chain) -> Result<()> {
+    let version = stamped(chain).await?;
+    if version != scratch_cards::state::config::VERSION {
+        bail!("the shelf is stamped v{version}; this build publishes v{} — re-stamp it first: scratch-ops setup --restamp{}",
+            scratch_cards::state::config::VERSION, if chain.net.mainnet { " --mainnet" } else { "" });
+    }
+    Ok(())
+}
+
 async fn shelf(chain: &Chain) -> Result<(u64, Vec<CardConfig>)> {
     let account = chain.account(&config()).await?.context("no config on chain — run `setup`")?;
     // A shelf not yet re-stamped holds v2 cards: shown as the one tier the program deals them as.
@@ -295,6 +313,7 @@ async fn publish(chain: &Chain, path: PathBuf, cards_only: bool, force: bool) ->
         }
     }
 
+    require_current(chain).await?;
     println!("writing the card sheet…");
     let (count, slots) = shelf(chain).await?;
     // Cut first: a slot past the sheet must not stay on sale while the rest is written, nor be
@@ -400,6 +419,10 @@ async fn verify(chain: &Chain, path: PathBuf) -> Result<()> {
     let mints = Mints::load(mainnet)?;
     let account = chain.account(&config()).await?.context("no config account")?;
     let header = casino_ops::decode::<casino_core::shelf::Header>(&account.data).context("not a shelf")?;
+    if header.version != scratch_cards::state::config::VERSION {
+        println!("config v{}, {} cards on chain — stamped with another layout, so nothing here can match the sheet", header.version, u64::from_le_bytes(account.data[48..56].try_into().unwrap()));
+        bail!("re-stamp the shelf first: scratch-ops setup --restamp{}, then publish", if mainnet { " --mainnet" } else { "" });
+    }
     let (count, slots) = shelf(chain).await?;
     println!("config v{}, {count} cards on chain, {} in the sheet\n", header.version, cards.len());
     let mut bad = 0;
@@ -538,11 +561,12 @@ async fn main() -> Result<()> {
                 Initialize { card_count: 0 },
             ))?;
             if restamp {
-                let empty = built(generated::ScratchCards::set_card_count_instruction(
-                    admin, config(), scratch_cards::instructions::set_card_count::SetCardCount { count: 0 },
-                ))?;
-                let signature = chain.base.send(&[empty, initialize], &[&chain.admin]).await?;
-                println!("shelf emptied, config re-stamped v{}  {}", scratch_cards::state::config::VERSION, short(signature));
+                let version = stamped(&chain).await?;
+                if version == scratch_cards::state::config::VERSION {
+                    bail!("the shelf is already stamped v{version} and its cards are live; there is nothing to re-stamp");
+                }
+                let signature = chain.base.send(&[initialize], &[&chain.admin]).await?;
+                println!("config re-stamped v{version} → v{}, shelf emptied  {}", scratch_cards::state::config::VERSION, short(signature));
                 println!("nothing is on sale until: scratch-ops publish --cards-only");
                 return Ok(());
             }

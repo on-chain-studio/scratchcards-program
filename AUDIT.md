@@ -44,8 +44,20 @@ Scope: `scratch-cards-program/src` (all instructions, state, utils), `engine/src
 > on devnet, not by the audit — `request_collect`'s frame at 4352 bytes, over the 4 KB SBF limit,
 > aborting every collect (terms on the heap, `ee13b67`). Tickets sold under v2 keep paying under
 > their own terms, and a v2 shelf keeps selling, checked against the live mainnet shelf
-> (`tests/v2.rs`) and the frozen v2 engine (0 mismatches over 2.2M seeds). Items 7 and 10 below
+> (`tests/v2.rs`) and the frozen v2 engine (0 mismatches over 2.2M seeds). Collect to the vault
+> CPI, worst seed: straight 32k, triple 68k, five 31k, vault 49k CU. Items 7 and 10 below
 > describe the pool-era `set_card`; the v3 rules are in `src/instructions/set_card.rs`.
+>
+> A second audit of the v2 path (three read-only reviews, 2026-10-21) confirmed the v2
+> equivalence is structural — every publishable v2 card has ≥2 drawable coins, so `draw_prize`
+> takes v2's own single `rng.pick` (fuzz: 3000 random publishable v2 cards × 200 seeds, 0
+> mismatches) — and found: a bare `Initialize` could re-stamp a v2 shelf with its 5 cards still
+> on sale at misread prices (now the program empties a shelf it re-stamps, tested on the live
+> bytes); `publish`/`verify` on an un-restamped shelf cut a live slot before failing (now refused
+> with the remedy); the app's "WIN UP TO" on the live v2 shelf headlined the cheapest coin (now
+> the rarest-weighted). Not covered by any test here: a returning mainnet player's first purchase
+> after the restamp closes a 1096-byte card and recreates it at 1416 in one instruction — tried
+> on the devnet TEE, see the runbook.
 
 Each item below is self-contained — location, what breaks, and what to do — so they can be
 taken in any order. Severity order is the recommended order.

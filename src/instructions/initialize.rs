@@ -8,8 +8,8 @@ use crate::state::analytics::{self, Analytics};
 use crate::state::config::{self, Config, INITIAL_CARDS};
 use crate::ScratchCards;
 
-/// Creates `["config"]`, the treasury PDAs and `["analytics"]`, and sets the card count. Admin
-/// only, idempotent. The house is program-owned so it can be delegated to the rollup (it pays
+/// Creates `["config"]`, the treasury PDAs and `["analytics"]`, and stamps the shelf's layout —
+/// emptying it when the layout changed. Admin only, idempotent. The house is program-owned so it can be delegated to the rollup (it pays
 /// VRF + ephemeral rent); analytics is delegated the same way, since the settle callbacks that
 /// write it run there. Analytics gets a TEE permission naming the admins, like a ledger's.
 /// Accounts: [initializer, config, house, jackpot, analytics, permission, permission_program,
@@ -111,32 +111,20 @@ impl Initialize {
             permission::members(program_id, &ANALYTICS_READERS),
         )?;
 
-        // Grow a short shelf up to the starting size, never shrink — it may hold live cards. Rent
-        // must come with the growth or the resize fails the runtime's exemption check.
-        if config_account.data_len() < initial {
-            let required = pda::min_balance(initial);
-            let held = config_account.lamports();
-            if held < required {
-                invoke(
-                    &system_instruction::transfer(
-                        initializer.address(), config_account.address(), required - held,
-                    ),
-                    &[initializer.clone(), config_account.clone(), system_program.clone()],
-                )?;
-            }
-            config_account.resize(initial)?;
-        }
-        if self.card_count as usize > Config::capacity(config_account) {
-            return Err(CoreError::ShelfFull.into());
-        }
-
         let cfg = Config::load_mut(config_account)?;
+        // A shelf stamped with another layout holds cards this program reads at the wrong stride.
+        // Re-stamping it takes every card off sale in the same breath, so none is ever sold or
+        // valued misread; `SetCard` puts the sheet back, growing the shelf as it goes. A re-run at
+        // the current layout keeps its cards: declaring fewer (or zero, the fresh-shelf default)
+        // must not orphan tickets already sold.
+        let stamped = cfg.version;
         cfg.discriminator = config::DISCRIMINATOR;
         cfg.version = config::VERSION;
         cfg.authority = initializer.address().to_bytes();
-        // Like the shelf itself, the count never shrinks: a re-run declaring fewer cards (or
-        // zero, the fresh-shelf default) must not orphan cards already published and live.
-        cfg.count = cfg.count.max(self.card_count as u64);
+        cfg.count = if stamped == config::VERSION { cfg.count.max(self.card_count as u64) } else { 0 };
+        if cfg.count as usize > Config::capacity(config_account) {
+            return Err(CoreError::ShelfFull.into());
+        }
 
         Ok(())
     }

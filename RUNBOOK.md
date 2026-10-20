@@ -108,14 +108,17 @@ it was sold in — so the program goes first, the app whenever it is ready, the 
 
 ```
 solana program write-buffer … && solana program upgrade …   # the shelf stays as it was; nothing breaks
-scratch-ops setup --restamp                                  # empties the shelf AND re-stamps it, one tx
+scratch-ops setup --restamp                                  # Initialize: re-stamps the shelf, which empties it
 scratch-ops publish --cards-only                             # the sheet at the new layout
 scratch-ops verify
 ```
 
-Between the restamp and the publish nothing is on sale, by design: a slot read at the wrong
-stride is a card nobody published. Tickets bought before the restamp still collect under the
-terms they carry. Re-stamp mainnet only once the app that reads the new layout has shipped.
+The emptying is the program's own rule, not the CLI's: `Initialize` on a shelf stamped with
+another layout sets its count to 0 in the same instruction, so no slot is ever sold or valued
+at the wrong stride, whatever is sent around it. `publish` and `verify` refuse a shelf at
+another layout and say to re-stamp first. Tickets bought before the restamp still collect
+under the terms they carry. Re-stamp mainnet only once the app that reads the new layout has
+shipped.
 
 ---
 
