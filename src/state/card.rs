@@ -103,15 +103,17 @@ impl Card {
 
     /// The terms this card was sold under, at the layout they were printed in, or `None` for a
     /// pre-terms card (falls back to the shelf).
-    pub fn terms(account: &AccountInfo) -> Result<Option<Terms>, ProgramError> {
+    // On the heap: the terms are 1.3 KB, and the instructions reading them sit near the 4 KB SBF
+    // stack limit — a few copies on the stack overflowed `request_collect`'s frame.
+    pub fn terms(account: &AccountInfo) -> Result<Option<Box<Terms>>, ProgramError> {
         let data = account.try_borrow()?;
         let Some(n) = Self::terms_len(data.len()) else { return Ok(None) };
         let bytes = &data[Self::SIZE..Self::SIZE + n];
-        Ok(Some(if n == CARD_SIZE_V2 {
+        Ok(Some(Box::new(if n == CARD_SIZE_V2 {
             Terms::V2(bytes.try_into().unwrap())
         } else {
             Terms::V3(*bytemuck::try_from_bytes::<CardConfig>(bytes).map_err(|_| ProgramError::InvalidAccountData)?)
-        }))
+        })))
     }
 
     pub fn write_terms(account: &AccountInfo, terms: &Terms) -> ProgramResult {

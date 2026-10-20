@@ -62,30 +62,12 @@ impl RequestCollect {
             (card.card_id, card.seed)
         };
 
-        let terms = match Card::terms(card_account)? {
-            Some(t) => t,
-            None => config::shelf_card(config_account, card_id)?,
-        };
-        let wins = engine::evaluate_terms(&terms, &seed)?;
-
-        let mut movements = Vec::new();
-        {
-            let c = &terms;
-            for (i, amount) in wins.amounts.iter().enumerate() {
-                if *amount == 0 { continue; }
-                movements.push(receipt::Movement {
-                    mint: Pubkey::new_from_array(c.mint(i).ok_or(ProgramError::InvalidAccountData)?),
-                    amount: *amount,
-                    from: 1,
-                    to: 0,
-                });
-            }
-        }
+        let (mut movements, jackpot_won) = priced(card_account, config_account, card_id, &seed)?;
         // A won jackpot is the whole pot, read from its ledger and paid straight out of it. The
         // amount rides the receipt's args: the pot is drained by the time the callback runs, so
         // it cannot be re-read there, and the callback only fires if this exact receipt settled.
         let mut jackpot_paid = 0u64;
-        if wins.jackpot {
+        if jackpot_won {
             if *jackpot_ledger.address() != vault::ledger(jackpot.address()) {
                 return Err(CoreError::InvalidPDA.into());
             }
@@ -109,4 +91,34 @@ impl RequestCollect {
             &movements,
         )
     }
+}
+
+/// What the card pays, as the receipt's movements, and whether it hit the jackpot.
+///
+/// Its own frame, never inlined: the card's terms are 1.3 KB, and held in `process` alongside the
+/// receipt's CPI they pushed that frame past the 4 KB SBF stack limit — which aborts the
+/// instruction at run time, with no log saying why.
+#[inline(never)]
+fn priced(
+    card_account: &AccountInfo,
+    config_account: &AccountInfo,
+    card_id: u64,
+    seed: &[u8; 32],
+) -> Result<(Vec<receipt::Movement>, bool), ProgramError> {
+    let terms = match Card::terms(card_account)? {
+        Some(t) => t,
+        None => config::shelf_card(config_account, card_id)?,
+    };
+    let wins = engine::evaluate_terms(&terms, seed)?;
+    let mut movements = Vec::new();
+    for (i, amount) in wins.amounts.iter().enumerate() {
+        if *amount == 0 { continue; }
+        movements.push(receipt::Movement {
+            mint: Pubkey::new_from_array(terms.mint(i).ok_or(ProgramError::InvalidAccountData)?),
+            amount: *amount,
+            from: 1,
+            to: 0,
+        });
+    }
+    Ok((movements, wins.jackpot))
 }

@@ -7,6 +7,7 @@ use crate::state::config::{CardConfig, Terms};
 
 pub use scratch_engine::{Deal, Outcome, Winnings};
 
+#[inline(never)]
 fn shared(card: &CardConfig) -> scratch_engine::CardConfig {
     let mut out = scratch_engine::CardConfig {
         mode: card.mode,
@@ -64,11 +65,14 @@ pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, ProgramError> {
     scratch_engine::winnings(&shared(card), d).map_err(bad)
 }
 
+#[inline(never)]
 pub fn evaluate(card: &CardConfig, seed: &[u8; 32]) -> Result<Winnings, ProgramError> {
     scratch_engine::evaluate(&shared(card), seed).map_err(bad)
 }
 
 /// A card at either layout: a v2 card is read by the engine as one tier, dealing as v2 did.
+/// Its own frame: the engine's copy of a card is large, and every caller already holds one.
+#[inline(never)]
 pub fn evaluate_terms(terms: &Terms, seed: &[u8; 32]) -> Result<Winnings, ProgramError> {
     match terms {
         Terms::V3(c) => evaluate(c, seed),

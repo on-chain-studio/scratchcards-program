@@ -213,7 +213,8 @@ impl Terms {
 
 /// The published card at `id`, at whichever layout the shelf is stamped with: v3, or a v2 shelf
 /// not yet re-stamped. Nothing past the published count is ever read.
-pub fn shelf_card(account: &AccountInfo, id: u64) -> Result<Terms, ProgramError> {
+/// On the heap, like a ticket's terms: 1.3 KB is too much to copy around a 4 KB SBF frame.
+pub fn shelf_card(account: &AccountInfo, id: u64) -> Result<Box<Terms>, ProgramError> {
     let data = account.try_borrow()?;
     let header = bytemuck::try_from_bytes::<Header>(data.get(..Config::HEADER).ok_or(ProgramError::InvalidAccountData)?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -224,8 +225,8 @@ pub fn shelf_card(account: &AccountInfo, id: u64) -> Result<Terms, ProgramError>
     let at = Config::HEADER + id as usize * size;
     let bytes = data.get(at..at + size).ok_or(CoreError::NotOnShelf)?;
     match version {
-        VERSION => Ok(Terms::V3(*bytemuck::try_from_bytes::<CardConfig>(bytes).map_err(|_| ProgramError::InvalidAccountData)?)),
-        VERSION_V2 => Ok(Terms::V2(bytes.try_into().unwrap())),
+        VERSION => Ok(Box::new(Terms::V3(*bytemuck::try_from_bytes::<CardConfig>(bytes).map_err(|_| ProgramError::InvalidAccountData)?))),
+        VERSION_V2 => Ok(Box::new(Terms::V2(bytes.try_into().unwrap()))),
         _ => Err(ProgramError::InvalidAccountData),
     }
 }
