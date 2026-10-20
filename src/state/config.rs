@@ -102,7 +102,9 @@ pub struct CardConfig {
     pub pay_len:   u8,
     pub tier_len:  u8,
     pub token_len: u8,
-    pub _pad:      [u8; 2],
+    /// Which card this is, for the apps' copy and art; 0 = unnamed. The engine never reads it.
+    pub kind:      u8,
+    pub _pad:      u8,
     /// Compare: house block, mine block, prize block, strict.
     pub mode_args: [u16; 4],
     pub blocks: [Block; MAX_BLOCKS],

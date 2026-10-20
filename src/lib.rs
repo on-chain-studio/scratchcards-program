@@ -23,6 +23,7 @@ pub mod instructions {
     pub mod initialize;
     pub mod read_jackpot;
     pub mod set_card;
+    pub mod set_card_count;
 
     pub mod request_purchase;
     pub mod resolve_purchase;
@@ -44,7 +45,7 @@ pub mod utils {
 // Each discriminator is the little-endian u64 an instruction starts with, and they are the ones
 // this program has always had: dense, append-only, never reused — renumbering would silently
 // repoint old clients. The gaps (5, 6, 8, 10, 11, 13, 14, 19, 23) are retired variants that
-// have always been no-ops, so they reach `noop`; anything past 31 is refused. The settle and VRF
+// have always been no-ops, so they reach `noop`; anything past 33 is refused. The settle and VRF
 // callbacks are called back by these numbers, so they can no more move than the rest. Accounts
 // are taken in the order listed; any past the last are ignored.
 //
@@ -157,6 +158,16 @@ impl ScratchCards {
         args: set_card::SetCard,
     ) -> Result<()> {
         Ok(args.process(initializer.info.as_view(), config.info.as_view(), system_program.info.as_view())?)
+    }
+
+    #[instruction(discriminator = 33)]
+    pub fn set_card_count<'a>(
+        &self,
+        admin: &Signer<'a>,
+        config: &mut Account<'a>,
+        args: set_card_count::SetCardCount,
+    ) -> Result<()> {
+        Ok(args.process(admin.info.as_view(), config.info.as_view())?)
     }
 
     /// The VRF oracle's callback.
