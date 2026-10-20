@@ -170,6 +170,14 @@ enum Command {
     },
     /// Refreshes scripts/prices.json from CoinGecko and the mainnet mint accounts.
     FetchPrices,
+    /// Takes a player's ledger apart: home, every balance withdrawn to the wallet, the ledger and
+    /// its permission closed, the rent back. For a test wallet whose `play` run died before its
+    /// own `--close`.
+    ClosePlayer {
+        /// The player's keypair; the admin by default.
+        #[arg(long)]
+        wallet: Option<PathBuf>,
+    },
     /// Plays real cards: buy, reveal, collect.
     Play {
         #[arg(default_value_t = 3)]
@@ -568,6 +576,14 @@ async fn main() -> Result<()> {
         Command::TopUp { factor, fill, check } => float::top_up(&chain, factor, fill, check).await,
         Command::AcquireFloat { factor, slippage, swap } => float::acquire_float(&chain, factor, slippage, swap).await,
         Command::FetchPrices => prices::fetch(&chain.http).await,
+        Command::ClosePlayer { wallet: path } => {
+            let wallet = wallet(&chain, path)?;
+            let before = chain.balance(&wallet.pubkey()).await?;
+            let withdrawn = casino_ops::Player::new(&chain, &wallet, scratch_cards::ID).close().await?;
+            let after = chain.balance(&wallet.pubkey()).await?;
+            println!("withdrew {} SOL, closed the ledger and its permission; the wallet got back {} SOL", sol(withdrawn), sol(after.saturating_sub(before)));
+            Ok(())
+        }
         Command::Play { cards, card, close, wallet: path } => {
             let wallet = wallet(&chain, path)?;
             play::play(&chain, &wallet, cards, card, close).await
