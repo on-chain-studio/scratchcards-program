@@ -10,6 +10,40 @@
 use scratch_engine::*;
 use serde_json::Value;
 
+/// The coins a card pays in, and the prize rows, from the sheet. A sheet still in the pre-tier
+/// shape (one `pool` of token/amount/weight) is read as four rows over its coins — low, mid and
+/// high offering every coin, top only SOL — so the render guarantees hold for either shape.
+fn prizes(c: &Value, card: &mut CardConfig) -> Vec<String> {
+    if let Some(rows) = c["prizes"].as_array() {
+        let tokens: Vec<String> = c["tokens"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect();
+        card.token_len = tokens.len() as u8;
+        for (r, row) in rows.iter().enumerate() {
+            card.rows[r].weight = row["weight"].as_u64().unwrap() as u32;
+            for (t, a) in row["amounts"].as_array().unwrap().iter().enumerate() {
+                card.rows[r].amounts[t] = a.as_u64().unwrap();
+            }
+        }
+        return tokens;
+    }
+    let pool = c["pool"].as_array().unwrap();
+    let tokens: Vec<String> = pool.iter().map(|e| e["token"].as_str().unwrap().to_string()).collect();
+    card.token_len = tokens.len() as u8;
+    let sol = tokens.iter().position(|t| t == "SOL").unwrap_or(0);
+    let shares = [0.70, 0.20, 0.09];
+    let mut left = TOTAL;
+    for r in 0..3 {
+        let w = (TOTAL as f64 * shares[r]) as u64;
+        card.rows[r].weight = w as u32;
+        left -= w;
+        for (t, e) in pool.iter().enumerate() {
+            card.rows[r].amounts[t] = e["amount"].as_u64().unwrap() * (1 << (3 * r));
+        }
+    }
+    card.rows[3].weight = left as u32;
+    card.rows[3].amounts[sol] = pool[sol]["amount"].as_u64().unwrap() * 1000;
+    tokens
+}
+
 fn cards() -> Vec<(String, CardConfig)> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tools/sheet/cards.json");
     let raw: Value = serde_json::from_str(&std::fs::read_to_string(path).expect("cards.json")).unwrap();
@@ -60,13 +94,8 @@ fn cards() -> Vec<(String, CardConfig)> {
                 };
                 card.tier_len = i as u8 + 1;
             }
-            for (i, e) in c["pool"].as_array().unwrap().iter().enumerate() {
-                card.pool[i] = PoolEntry {
-                    weight: e["weight"].as_u64().unwrap() as u32,
-                    amount: e["amount"].as_u64().unwrap(),
-                };
-                card.pool_len = i as u8 + 1;
-            }
+            let tokens = prizes(c, &mut card);
+            card.sol_index = tokens.iter().position(|t| t == "SOL").map_or(0xFFFF, |i| i as u16);
             (c["id"].as_str().unwrap().to_string(), card)
         })
         .collect()
@@ -92,7 +121,8 @@ fn dealt_cards_match_their_outcome() {
     }
 }
 
-/// Forced coverage: every pay entry on every token, rendered repeatedly.
+/// Forced coverage: every pay entry on every symbol (a coin in each tier that offers it), rendered
+/// repeatedly.
 ///
 /// This is the part seed fuzzing cannot do. The rarest rungs on this sheet are 1 in millions, so
 /// a random sweep would never place one — and those are exactly the outcomes whose render has
@@ -100,28 +130,30 @@ fn dealt_cards_match_their_outcome() {
 #[test]
 fn every_declared_outcome_renders_correctly() {
     for (id, card) in cards() {
+        let (syms, n_syms) = card.symbols();
         for pay in 0..card.pays().len() {
-            for token in 0..card.pool().len() {
+            for &s in &syms[..n_syms] {
                 let p = card.pays()[pay];
+                let coin = symbol_token(s);
                 let mut out = Outcome::default();
-                out.wins[0] = Win { pay: pay as u8, token: token as u8, count: p.min };
+                out.wins[0] = Win { pay: pay as u8, token: s, count: p.min };
                 out.win_len = 1;
                 for n in 0..400u64 {
                     let mut rng = Rng::from_bytes(&seed(n * 7 + pay as u64));
                     let d = render(&card, &out, &mut rng)
-                        .unwrap_or_else(|_| panic!("{id}: pay {pay} token {token} failed to render"));
+                        .unwrap_or_else(|_| panic!("{id}: pay {pay} symbol {s} failed to render"));
                     let got = winnings(&card, &d).unwrap();
-                    let want = card.pool()[token].amount
+                    let want = card.amount(s)
                         * p.mult as u64
                         * if p.flags & LINEAR != 0 { p.min as u64 } else { 1 };
                     assert_eq!(
-                        got.amounts[token], want,
-                        "{id}: pay {pay} (scope {:#x} min {} mult {}) token {token} paid {} want {}",
-                        p.scope, p.min, p.mult, got.amounts[token], want
+                        got.amounts[coin], want,
+                        "{id}: pay {pay} (scope {:#x} min {} mult {}) symbol {s} paid {} want {}",
+                        p.scope, p.min, p.mult, got.amounts[coin], want
                     );
                     for (t, &a) in got.amounts.iter().enumerate() {
-                        if t != token {
-                            assert_eq!(a, 0, "{id}: pay {pay} token {token} also paid token {t}");
+                        if t != coin {
+                            assert_eq!(a, 0, "{id}: pay {pay} symbol {s} also paid coin {t}");
                         }
                     }
                 }
@@ -131,9 +163,9 @@ fn every_declared_outcome_renders_correctly() {
 }
 
 /// A losing or near-miss jackpot line must never *look* won. A cell reads as SOL when it is the
-/// SOL mark or a pool token whose mint is SOL — so with SOL placed at every pool position (and at
-/// none), a line reading as all-SOL must exactly track the real jackpot. This is the class of bug
-/// where a near-miss showed four SOL coins.
+/// SOL mark or a coin whose mint is SOL — so with SOL placed at every coin position (and at none),
+/// a line reading as all-SOL must exactly track the real jackpot. This is the class of bug where a
+/// near-miss showed four SOL coins.
 #[test]
 fn no_line_reads_as_a_false_jackpot() {
     let n: u64 = std::env::var("FUZZ_SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(50_000);
@@ -141,8 +173,8 @@ fn no_line_reads_as_a_false_jackpot() {
     let mut jackpots = 0u64;
     let mut nears = 0u64;
     for (id, base) in cards() {
-        let pool_len = base.pool_len as u16;
-        for sol in (0..pool_len).chain(std::iter::once(0xFFFFu16)) {
+        let coins = base.token_len as u16;
+        for sol in (0..coins).chain(std::iter::once(0xFFFFu16)) {
             let mut card = base;
             card.sol_index = sol;
             for k in 0..n {
@@ -174,15 +206,16 @@ fn no_line_reads_as_a_false_jackpot() {
     eprintln!("false-jackpot fuzz: {total} deals, {jackpots} real jackpots, {nears} near-misses");
 }
 
-/// What the *player* sees: cells collapsed by icon. A plate/mark shows its pool token's mint, so
-/// two indices with the same mint are indistinguishable. On the jackpot line a SOL pool token
-/// (mint 0) also reads as the jackpot SOL mark; elsewhere the SOL_MARK sentinel never appears, so a
-/// SOL-token mark is just that token. Numbers and multipliers are unambiguous.
+/// What the *player* sees: cells collapsed by icon. A plate shows its coin's mint in its tier's
+/// frame, so two symbols of one tier whose coins share a mint are indistinguishable, while the same
+/// coin in two tiers is not. A jackpot-line mark shows a coin's mint, and a SOL coin (mint 0) there
+/// also reads as the jackpot SOL mark. Numbers and multipliers are unambiguous.
 fn by_icon(cell: u16, mints: &[u16; 16], pl: usize, jackpot_line: bool) -> u16 {
     let first = |idx: usize| (0..pl).find(|&j| mints[j] == mints[idx]).unwrap_or(idx) as u16;
     if is_plate(cell) {
-        let i = payload(cell) as usize;
-        if i < pl { plate(first(i)) } else { cell }
+        let s = payload(cell) as u8;
+        let (row, coin) = (symbol_row(s), symbol_token(s));
+        if coin < pl { plate(symbol(row, first(coin) as usize) as u16) } else { cell }
     } else if is_mark(cell) {
         let p = payload(cell) as usize;
         if payload(cell) == SOL_MARK { mark(SOL_MARK) }
@@ -201,7 +234,7 @@ fn by_icon(cell: u16, mints: &[u16; 16], pl: usize, jackpot_line: bool) -> u16 {
 fn the_whole_card_shows_what_it_pays() {
     let n: u64 = std::env::var("FUZZ_SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3_000);
     for (id, base) in cards() {
-        let pl = base.pool_len as usize;
+        let pl = base.token_len as usize;
         // publishable configs only: distinct mints, with SOL (0) at each position and at none
         for sol in (0..pl as i64).chain(std::iter::once(-1i64)) {
             let cfg = (sol + 1) as u64;
@@ -222,6 +255,42 @@ fn the_whole_card_shows_what_it_pays() {
                     "{id} cfg{cfg} seed#{k} mints={:?}: pays {:?} but reads as {:?}", &mints[..pl], real.amounts, seen.amounts);
                 assert_eq!(real.jackpot, seen.jackpot,
                     "{id} cfg{cfg} seed#{k} mints={:?}: jackpot pays {} but reads {}", &mints[..pl], real.jackpot, seen.jackpot);
+            }
+        }
+    }
+}
+
+/// A win's prize is a tier by its weight, then one of that tier's coins, each as likely. Drawn
+/// from the roll itself, over every card, against the published weights.
+#[test]
+fn a_prize_is_a_tier_by_weight_then_any_of_its_coins() {
+    for (id, card) in cards() {
+        let mut by_row = [0u64; PRIZE_ROWS];
+        let mut by_symbol = [0u64; MAX_SYMBOLS];
+        let mut wins = 0u64;
+        for n in 0..400_000u64 {
+            let mut rng = Rng::from_bytes(&seed(n));
+            for w in roll(&card, &mut rng).wins() {
+                by_row[symbol_row(w.token)] += 1;
+                by_symbol[w.token as usize] += 1;
+                wins += 1;
+            }
+        }
+        assert!(wins >= 10_000, "{id}: only {wins} wins in 400,000 rolls — too few to judge the draw");
+        eprintln!("{id}: {wins} wins, by tier {by_row:?}");
+        let total: u64 = card.rows.iter().map(|r| r.weight as u64).sum();
+        for r in 0..PRIZE_ROWS {
+            let want = card.rows[r].weight as f64 / total as f64;
+            let got = by_row[r] as f64 / wins as f64;
+            assert!((got - want).abs() < 0.01 + want * 0.05, "{id}: tier {r} drawn {got:.4}, weighted {want:.4}");
+            let coins: Vec<usize> = (0..card.tokens()).filter(|&t| card.rows[r].amounts[t] > 0).collect();
+            if by_row[r] < 2_000 {
+                continue;
+            }
+            for &t in &coins {
+                let share = by_symbol[symbol(r, t) as usize] as f64 / by_row[r] as f64;
+                let even = 1.0 / coins.len() as f64;
+                assert!((share - even).abs() < 0.03 + even * 0.2, "{id}: tier {r} coin {t} drawn {share:.3}, even {even:.3}");
             }
         }
     }

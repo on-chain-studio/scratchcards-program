@@ -8,7 +8,7 @@ fn main() {
     let w = scratch_engine::winnings(&card, &d).expect("winnings");
     println!("body_len {} total {}", d.body_len, d.len);
     println!("REAL winnings.jackpot = {}", w.jackpot);
-    println!("amounts = {:?}", &w.amounts[..card.pool_len as usize]);
+    println!("amounts = {:?}", &w.amounts[..card.tokens()]);
     print!("jackpot line (fixed engine): ");
     for &c in &d.cells[d.body_len..d.len] {
         let p = c & 0x0FFF;

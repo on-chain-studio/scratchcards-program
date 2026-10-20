@@ -14,13 +14,19 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 pub use casino_core::rng::{Rng, TOTAL};
 
-pub const MAX_POOL: usize = 10;
+/// Coins a card may pay in. Every prize row prints an amount per coin; a zero amount leaves the coin
+/// out of that row.
+pub const MAX_TOKENS: usize = 12;
+/// Prize tiers, lowest first: low, mid, high, top. Each is drawn in its own frame around the coin.
+pub const PRIZE_ROWS: usize = 4;
+/// What a plate can show: a coin in one tier's frame. `row * MAX_TOKENS + token`.
+pub const MAX_SYMBOLS: usize = PRIZE_ROWS * MAX_TOKENS;
 pub const MAX_BLOCKS: usize = 8;
 pub const MAX_PAYS: usize = 32;
 pub const MAX_TIERS: usize = 4;
 pub const MAX_CELLS: usize = 32;
 
-/// Sentinel pool index for the SOL mark on the jackpot line — never a plate.
+/// Sentinel coin on the jackpot line for the SOL mark — never a plate.
 pub const SOL_MARK: u16 = 255;
 
 pub const ROLE_PLATE: u8 = 0;
@@ -69,10 +75,12 @@ pub struct Tier {
     pub weight: u32,
 }
 
+/// One prize tier: how often it is the prize, and what it pays in each coin (zero: not offered).
+/// The coins of a tier are worth about the same; which one a win pays is drawn uniformly.
 #[derive(Clone, Copy, Default)]
-pub struct PoolEntry {
+pub struct PrizeRow {
     pub weight: u32,
-    pub amount: u64,
+    pub amounts: [u64; MAX_TOKENS],
 }
 
 #[derive(Clone, Copy)]
@@ -85,13 +93,13 @@ pub struct CardConfig {
     pub block_len: u8,
     pub pay_len: u8,
     pub tier_len: u8,
-    pub pool_len: u8,
+    pub token_len: u8,
     pub blocks: [Block; MAX_BLOCKS],
     pub pays: [Pay; MAX_PAYS],
     pub tiers: [Tier; MAX_TIERS],
-    pub pool: [PoolEntry; MAX_POOL],
-    /// Pool index whose mint is SOL, or 0xFFFF if none. A SOL pool token renders identically to
-    /// the jackpot's SOL mark, so it must never be a jackpot-line filler.
+    pub rows: [PrizeRow; PRIZE_ROWS],
+    /// Coin whose mint is SOL, or 0xFFFF if none. A SOL coin renders identically to the jackpot's
+    /// SOL mark, so it must never be a jackpot-line filler.
     pub sol_index: u16,
 }
 
@@ -106,11 +114,11 @@ impl Default for CardConfig {
             block_len: 0,
             pay_len: 0,
             tier_len: 0,
-            pool_len: 0,
+            token_len: 0,
             blocks: [Block::default(); MAX_BLOCKS],
             pays: [Pay::default(); MAX_PAYS],
             tiers: [Tier::default(); MAX_TIERS],
-            pool: [PoolEntry::default(); MAX_POOL],
+            rows: [PrizeRow::default(); PRIZE_ROWS],
             sol_index: 0xFFFF,
         }
     }
@@ -129,8 +137,32 @@ impl CardConfig {
     pub fn tiers(&self) -> &[Tier] {
         &self.tiers[..(self.tier_len as usize).min(MAX_TIERS)]
     }
-    pub fn pool(&self) -> &[PoolEntry] {
-        &self.pool[..(self.pool_len as usize).min(MAX_POOL)]
+    pub fn tokens(&self) -> usize {
+        (self.token_len as usize).min(MAX_TOKENS)
+    }
+
+    /// What `symbol` pays, before any multiple; zero when the card doesn't offer it.
+    pub fn amount(&self, symbol: u8) -> u64 {
+        let (row, token) = (symbol_row(symbol), symbol_token(symbol));
+        if row >= PRIZE_ROWS || token >= self.tokens() {
+            return 0;
+        }
+        self.rows[row].amounts[token]
+    }
+
+    /// Every symbol the card offers, tier by tier, coin by coin — the order every draw walks.
+    pub fn symbols(&self) -> ([u8; MAX_SYMBOLS], usize) {
+        let mut out = [0u8; MAX_SYMBOLS];
+        let mut n = 0;
+        for row in 0..PRIZE_ROWS {
+            for token in 0..self.tokens() {
+                if self.rows[row].amounts[token] > 0 {
+                    out[n] = symbol(row, token);
+                    n += 1;
+                }
+            }
+        }
+        (out, n)
     }
 
     /// Cells before the jackpot line — everything a pay entry may look at.
@@ -159,10 +191,10 @@ impl CardConfig {
 }
 
 // Cell encoding, u16:
-//   0x0000 | idx   plate (pool index)
+//   0x0000 | sym   plate: a coin in a tier's frame (`symbol`)
 //   0x1000 | n     printed number
 //   0x2000 | m     slot multiplier
-//   0x3000 | idx   jackpot-line mark (SOL_MARK = SOL)
+//   0x3000 | idx   mark: a symbol in the mark block; a coin on the jackpot line (SOL_MARK = SOL)
 const KIND_PLATE: u16 = 0x0000;
 const KIND_NUM: u16 = 0x1000;
 const KIND_MULT: u16 = 0x2000;
@@ -192,9 +224,20 @@ pub fn payload(c: u16) -> u16 {
     c & !KIND_MASK
 }
 
+/// The symbol for `token` in tier `row`; a plate's payload.
+pub fn symbol(row: usize, token: usize) -> u8 {
+    (row * MAX_TOKENS + token) as u8
+}
+pub fn symbol_row(s: u8) -> usize {
+    s as usize / MAX_TOKENS
+}
+pub fn symbol_token(s: u8) -> usize {
+    s as usize % MAX_TOKENS
+}
+
 const EMPTY: u16 = 0xFFFF;
 
-/// One paying line of the outcome: which entry fired, on which token, at what group size.
+/// One paying line of the outcome: which entry fired, on which symbol, at what group size.
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct Win {
     pub pay: u8,
@@ -239,8 +282,8 @@ pub struct Deal {
 }
 
 pub struct Winnings {
-    /// token base units won per pool index, multiplier applied
-    pub amounts: [u64; MAX_POOL],
+    /// base units won per coin, every tier added up, multiplier applied
+    pub amounts: [u64; MAX_TOKENS],
     pub jackpot: bool,
     pub multiplier: u32,
 }
@@ -260,23 +303,29 @@ fn effective_mult(p: &Pay) -> u64 {
 
 // ── rolling ────────────────────────────────────────────────────────────────────────────────
 
-fn pool_weights(card: &CardConfig) -> [u32; MAX_POOL] {
-    let mut w = [0u32; MAX_POOL];
-    for (i, e) in card.pool().iter().enumerate() {
-        w[i] = e.weight;
+/// The prize a win pays: a tier by its weight, then one of that tier's coins, each as likely.
+/// `None` only for a tier with no coin, which `SetCard` refuses to publish.
+fn draw_prize(card: &CardConfig, rng: &mut Rng) -> Option<u8> {
+    let mut w = [0u32; PRIZE_ROWS];
+    for (i, r) in card.rows.iter().enumerate() {
+        w[i] = r.weight;
     }
-    w
+    let row = rng.pick(&w)?;
+    let offered = card.rows[row].amounts[..card.tokens()].iter().filter(|&&a| a > 0).count();
+    if offered == 0 {
+        return None;
+    }
+    let k = rng.below(offered as u64) as usize;
+    let token = (0..card.tokens()).filter(|&t| card.rows[row].amounts[t] > 0).nth(k)?;
+    Some(symbol(row, token))
 }
 
 /// Draws what the card pays from the published weights, before any cell exists.
 pub fn roll(card: &CardConfig, rng: &mut Rng) -> Outcome {
     let mut out = Outcome::default();
-    let pool_len = card.pool_len as usize;
-    if pool_len == 0 {
+    if card.symbols().1 == 0 {
         return out;
     }
-    let pw = pool_weights(card);
-    let pool = &pw[..pool_len];
 
     let mut pay_w = [0u32; MAX_PAYS];
     for (i, p) in card.pays().iter().enumerate() {
@@ -288,15 +337,15 @@ pub fn roll(card: &CardConfig, rng: &mut Rng) -> Outcome {
         // every entry rolls on its own and the payouts add up
         for (i, p) in card.pays().iter().enumerate() {
             if rng.weight() < p.weight {
-                if let Some(t) = rng.pick(pool) {
-                    out.push(Win { pay: i as u8, token: t as u8, count: p.min });
+                if let Some(s) = draw_prize(card, rng) {
+                    out.push(Win { pay: i as u8, token: s, count: p.min });
                 }
             }
         }
     } else if let Some(i) = rng.pick(pays) {
         // exclusive: one entry at most, the shortfall to 2^32 being the miss
-        if let Some(t) = rng.pick(pool) {
-            out.push(Win { pay: i as u8, token: t as u8, count: card.pays()[i].min });
+        if let Some(s) = draw_prize(card, rng) {
+            out.push(Win { pay: i as u8, token: s, count: card.pays()[i].min });
         }
     }
 
@@ -366,10 +415,10 @@ fn is_marked(card: &CardConfig, cells: &[u16; MAX_CELLS], token: u8) -> bool {
 
 /// Places cells that display exactly `out` and nothing more.
 pub fn render(card: &CardConfig, out: &Outcome, rng: &mut Rng) -> Result<Deal, BadCard> {
-    let pool_len = card.pool_len as usize;
+    let (syms, sym_len) = card.symbols();
     let body = card.body_len();
     let total = card.cell_count();
-    if pool_len == 0 || total == 0 || total > MAX_CELLS {
+    if sym_len == 0 || total == 0 || total > MAX_CELLS {
         return Err(BadCard);
     }
 
@@ -378,7 +427,7 @@ pub fn render(card: &CardConfig, out: &Outcome, rng: &mut Rng) -> Result<Deal, B
     // Marks first: whether a fill counts as a match depends on them, so they must exist before it.
     if let Some((_, start, b)) = card.first_block(ROLE_MARK) {
         let slots = (b.count as usize).min(MAX_CELLS - start);
-        let mut chosen = [u8::MAX; MAX_POOL];
+        let mut chosen = [u8::MAX; MAX_SYMBOLS];
         let mut n = 0usize;
         for w in out.wins() {
             if card.pays()[w.pay as usize].flags & MARKED != 0
@@ -393,15 +442,15 @@ pub fn render(card: &CardConfig, out: &Outcome, rng: &mut Rng) -> Result<Deal, B
         let mut guard = 0;
         while n < slots && guard < 256 {
             guard += 1;
-            let t = rng.below(pool_len as u64) as u8;
-            if distinct && chosen[..n].contains(&t) && n < pool_len {
+            let t = syms[rng.below(sym_len as u64) as usize];
+            if distinct && chosen[..n].contains(&t) && n < sym_len {
                 continue;
             }
             chosen[n] = t;
             n += 1;
         }
         for slot in 0..slots {
-            let t = if chosen[slot] == u8::MAX { 0 } else { chosen[slot] };
+            let t = if chosen[slot] == u8::MAX { syms[0] } else { chosen[slot] };
             cells[start + slot] = mark(t as u16);
         }
     }
@@ -433,10 +482,10 @@ pub fn render(card: &CardConfig, out: &Outcome, rng: &mut Rng) -> Result<Deal, B
         }
     }
 
-    // Fill the body without firing anything undeclared: uniform over the pool, winning tokens left out.
-    let mut winners = [false; MAX_POOL];
+    // Fill the body without firing anything undeclared: uniform over the symbols, winning ones left out.
+    let mut winners = [false; MAX_SYMBOLS];
     for w in out.wins() {
-        if (w.token as usize) < MAX_POOL {
+        if (w.token as usize) < MAX_SYMBOLS {
             winners[w.token as usize] = true;
         }
     }
@@ -451,8 +500,8 @@ pub fn render(card: &CardConfig, out: &Outcome, rng: &mut Rng) -> Result<Deal, B
             }
         }
         let mut chosen = None;
-        for _ in 0..pool_len * 2 {
-            let t = rng.below(pool_len as u64) as u8;
+        for _ in 0..sym_len * 2 {
+            let t = syms[rng.below(sym_len as u64) as usize];
             if winners[t as usize] || !placeable(card, out, &cells, cell, t) {
                 continue;
             }
@@ -460,10 +509,13 @@ pub fn render(card: &CardConfig, out: &Outcome, rng: &mut Rng) -> Result<Deal, B
             break;
         }
         if chosen.is_none() {
-            // deterministic sweep so the fill always completes; an all-winner pool re-admits winners
-            chosen = (0..pool_len as u8)
+            // deterministic sweep so the fill always completes; all-winner symbols re-admit winners
+            let all = &syms[..sym_len];
+            chosen = all
+                .iter()
+                .copied()
                 .find(|&t| !winners[t as usize] && placeable(card, out, &cells, cell, t))
-                .or_else(|| (0..pool_len as u8).find(|&t| placeable(card, out, &cells, cell, t)));
+                .or_else(|| all.iter().copied().find(|&t| placeable(card, out, &cells, cell, t)));
             fallback += 1;
         }
         match chosen {
@@ -475,10 +527,10 @@ pub fn render(card: &CardConfig, out: &Outcome, rng: &mut Rng) -> Result<Deal, B
 
     render_jackpot(card, out, rng, &mut cells);
 
-    // Any cell still unset would read as a plate of pool index 4095.
+    // Any cell still unset would read as a plate of symbol 4095.
     for c in cells[..total].iter_mut() {
         if *c == EMPTY {
-            *c = plate(0);
+            *c = plate(syms[0] as u16);
         }
     }
 
@@ -536,12 +588,12 @@ fn render_compare(
     Ok(())
 }
 
-/// A pool-token mark that never renders as SOL (a SOL pool token is indistinguishable from the mark).
-fn nonsol_mark(rng: &mut Rng, pool_len: u64, sol_index: u16) -> u16 {
-    if (sol_index as u64) >= pool_len || pool_len <= 1 {
-        return mark(rng.below(pool_len) as u16);
+/// A coin mark that never renders as SOL (a SOL coin is indistinguishable from the mark).
+fn nonsol_mark(rng: &mut Rng, coins: u64, sol_index: u16) -> u16 {
+    if (sol_index as u64) >= coins || coins <= 1 {
+        return mark(rng.below(coins) as u16);
     }
-    let k = rng.below(pool_len - 1) as u16;
+    let k = rng.below(coins - 1) as u16;
     mark(if k >= sol_index { k + 1 } else { k })
 }
 
@@ -551,7 +603,7 @@ fn render_jackpot(card: &CardConfig, out: &Outcome, rng: &mut Rng, cells: &mut [
     if n == 0 {
         return;
     }
-    let pool_len = card.pool_len.max(1) as u64;
+    let coins = card.tokens().max(1) as u64;
 
     match out.jackpot {
         2 => {
@@ -565,12 +617,12 @@ fn render_jackpot(card: &CardConfig, out: &Outcome, rng: &mut Rng, cells: &mut [
                 cells[start + i] = mark(SOL_MARK);
             }
             // one cell must not read as SOL, or a near miss looks like a hit
-            cells[start + skip] = nonsol_mark(rng, pool_len, card.sol_index);
+            cells[start + skip] = nonsol_mark(rng, coins, card.sol_index);
         }
         // Losing line: non-SOL marks only, or a loss reads as a win.
         _ => {
             for i in 0..n {
-                cells[start + i] = nonsol_mark(rng, pool_len, card.sol_index);
+                cells[start + i] = nonsol_mark(rng, coins, card.sol_index);
             }
         }
     }
@@ -580,10 +632,10 @@ fn render_jackpot(card: &CardConfig, out: &Outcome, rng: &mut Rng, cells: &mut [
 
 /// What the cells a player can see are worth. The authority for every payout.
 pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, BadCard> {
-    let mut out = Winnings { amounts: [0; MAX_POOL], jackpot: false, multiplier: 1 };
+    let mut out = Winnings { amounts: [0; MAX_TOKENS], jackpot: false, multiplier: 1 };
     let cells = &d.cells;
-    let pool_len = card.pool_len as usize;
-    if pool_len == 0 {
+    let (syms, sym_len) = card.symbols();
+    if sym_len == 0 {
         return Err(BadCard);
     }
 
@@ -604,10 +656,11 @@ pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, BadCard> {
             let beats = if strict != 0 { m > h } else { m >= h };
             let prize = cells[ps + dd];
             if beats && is_plate(prize) {
-                let idx = payload(prize) as usize;
-                if idx >= pool_len {
+                let s = payload(prize);
+                if s as usize >= MAX_SYMBOLS || card.amount(s as u8) == 0 {
                     return Err(BadCard);
                 }
+                let s = s as u8;
                 // the entry covering this prize cell sets the multiple
                 let mult = card
                     .pays()
@@ -615,8 +668,8 @@ pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, BadCard> {
                     .find(|p| p.scope >> (ps + dd) & 1 == 1)
                     .map(effective_mult)
                     .unwrap_or(1);
-                out.amounts[idx] =
-                    out.amounts[idx].saturating_add(card.pool()[idx].amount.saturating_mul(mult));
+                let coin = symbol_token(s);
+                out.amounts[coin] = out.amounts[coin].saturating_add(card.amount(s).saturating_mul(mult));
             }
         }
     } else {
@@ -624,11 +677,11 @@ pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, BadCard> {
             if p.min == 0 {
                 continue;
             }
-            for token in 0..pool_len as u16 {
-                if p.flags & MARKED != 0 && !is_marked(card, cells, token as u8) {
+            for &s in &syms[..sym_len] {
+                if p.flags & MARKED != 0 && !is_marked(card, cells, s) {
                     continue;
                 }
-                let found = cells_of(p.scope).filter(|&i| cells[i] == plate(token)).count();
+                let found = cells_of(p.scope).filter(|&i| cells[i] == plate(s as u16)).count();
                 if found < p.min as usize {
                     continue;
                 }
@@ -642,8 +695,9 @@ pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, BadCard> {
                 if best.map(|q| q.min) != Some(p.min) {
                     continue;
                 }
-                out.amounts[token as usize] = out.amounts[token as usize]
-                    .saturating_add(card.pool()[token as usize].amount.saturating_mul(effective_mult(p)));
+                let coin = symbol_token(s);
+                out.amounts[coin] =
+                    out.amounts[coin].saturating_add(card.amount(s).saturating_mul(effective_mult(p)));
             }
         }
     }
@@ -684,11 +738,11 @@ pub fn deal_checked(card: &CardConfig, seed: &[u8; 32]) -> Result<(Deal, Outcome
     let d = render(card, &out, &mut rng)?;
     let got = winnings(card, &d)?;
 
-    let mut want = [0u64; MAX_POOL];
+    let mut want = [0u64; MAX_TOKENS];
     for w in out.wins() {
         let p = card.pays()[w.pay as usize];
-        want[w.token as usize] = want[w.token as usize]
-            .saturating_add(card.pool()[w.token as usize].amount.saturating_mul(effective_mult(&p)));
+        let coin = symbol_token(w.token);
+        want[coin] = want[coin].saturating_add(card.amount(w.token).saturating_mul(effective_mult(&p)));
     }
     if out.tier > 1 {
         for a in want.iter_mut() {
@@ -704,7 +758,12 @@ pub fn deal_checked(card: &CardConfig, seed: &[u8; 32]) -> Result<(Deal, Outcome
 // ── the account layout ─────────────────────────────────────────────────────────────────────
 
 /// Bytes one card occupies in the config account, and therefore what the wasm is handed.
-pub const CARD_BYTES: usize = 992;
+pub const CARD_BYTES: usize = 1312;
+
+// Where the coins and the prize rows sit in a stored card (see the program's `CardConfig`).
+const MINTS_AT: usize = 512;
+const ROWS_AT: usize = MINTS_AT + MAX_TOKENS * 32;
+const ROW_BYTES: usize = 8 + MAX_TOKENS * 8;
 
 fn u16le(b: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([b[at], b[at + 1]])
@@ -731,13 +790,13 @@ pub fn parse(b: &[u8]) -> Option<CardConfig> {
         block_len: b[18],
         pay_len: b[19],
         tier_len: b[20],
-        pool_len: b[21],
+        token_len: b[21],
         ..Default::default()
     };
     if c.block_len as usize > MAX_BLOCKS
         || c.pay_len as usize > MAX_PAYS
         || c.tier_len as usize > MAX_TIERS
-        || c.pool_len as usize > MAX_POOL
+        || c.token_len as usize > MAX_TOKENS
     {
         return None;
     }
@@ -769,12 +828,19 @@ pub fn parse(b: &[u8]) -> Option<CardConfig> {
         let at = 480 + i * 8;
         c.tiers[i] = Tier { factor: u32le(b, at), weight: u32le(b, at + 4) };
     }
-    for i in 0..MAX_POOL {
-        let at = 512 + i * 48;
-        // the mint occupies the first 32 bytes; the engine reads it only to spot SOL (all-zero)
-        c.pool[i] = PoolEntry { amount: u64le(b, at + 32), weight: u32le(b, at + 40) };
-        if (i as u8) < c.pool_len && c.sol_index == 0xFFFF && b[at..at + 32].iter().all(|&x| x == 0) {
+    // the engine reads a coin's mint only to spot SOL (all-zero)
+    for i in 0..c.tokens() {
+        let at = MINTS_AT + i * 32;
+        if b[at..at + 32].iter().all(|&x| x == 0) {
             c.sol_index = i as u16;
+            break;
+        }
+    }
+    for r in 0..PRIZE_ROWS {
+        let at = ROWS_AT + r * ROW_BYTES;
+        c.rows[r].weight = u32le(b, at);
+        for t in 0..MAX_TOKENS {
+            c.rows[r].amounts[t] = u64le(b, at + 8 + t * 8);
         }
     }
     Some(c)
@@ -783,8 +849,8 @@ pub fn parse(b: &[u8]) -> Option<CardConfig> {
 /// Shared in/out buffer — no allocator here, so the host writes and reads the result in place.
 ///
 /// In:  `CARD_BYTES` of card, exactly as the account stores it, then the 32-byte seed.
-/// Out: len u16, body_len u16, 32 cells as u16, jackpot u8, multiplier u32, then MAX_POOL
-///      amounts as u64.
+/// Out: len u16, body_len u16, 32 cells as u16, jackpot u8, multiplier u32, then MAX_TOKENS
+///      amounts as u64, one per coin.
 pub const BUF_LEN: usize = CARD_BYTES + 32;
 
 #[cfg(target_arch = "wasm32")]
