@@ -324,33 +324,29 @@ fn draw_prize(card: &CardConfig, rng: &mut Rng) -> Option<u8> {
         w[i] = r.weight;
     }
     let row = if card.prize_rows() == 1 { 0 } else { rng.pick(&w[..card.prize_rows()])? };
-    let weights = card.coin_weights.unwrap_or_else(|| equal_weights(&card.rows[row], card.tokens()));
-    let offered = (0..card.tokens()).filter(|&t| card.rows[row].amounts[t] > 0 && weights[t] > 0).count();
-    let token = match offered {
+    let amounts = &card.rows[row].amounts[..card.tokens()];
+    let weights = card.coin_weights.unwrap_or_else(|| equal_weights(amounts));
+    let drawable = |t: &usize| amounts[*t] > 0 && weights[*t] > 0;
+    let token = match (0..amounts.len()).filter(drawable).count() {
         0 => return None,
-        1 => (0..card.tokens()).find(|&t| card.rows[row].amounts[t] > 0 && weights[t] > 0)?,
-        _ => rng.pick(&weights[..card.tokens()])?,
+        1 => (0..amounts.len()).find(drawable)?,
+        _ => rng.pick(&weights[..amounts.len()])?,
     };
-    if card.rows[row].amounts[token] == 0 {
-        return None;
-    }
     Some(symbol(row, token))
 }
 
-/// 2^32 split as evenly as a `u32` table can over the coins a tier offers: the first coins take
-/// the remainder, one unit each. A lone coin gets nothing — it is never drawn.
-fn equal_weights(row: &PrizeRow, tokens: usize) -> [u32; MAX_TOKENS] {
+/// 2^32 split as evenly as a `u32` table can over the coins a tier offers — the first coins take
+/// the remainder, a unit each. A lone coin gets nothing: it is never drawn.
+fn equal_weights(amounts: &[u64]) -> [u32; MAX_TOKENS] {
     let mut out = [0u32; MAX_TOKENS];
-    let n = row.amounts[..tokens].iter().filter(|&&a| a > 0).count() as u64;
+    let n = amounts.iter().filter(|&&a| a > 0).count() as u64;
     if n < 2 {
         return out;
     }
-    let (base, mut extra) = (TOTAL / n, TOTAL % n);
-    for t in 0..tokens {
-        if row.amounts[t] > 0 {
-            out[t] = (base + if extra > 0 { 1 } else { 0 }) as u32;
-            extra = extra.saturating_sub(1);
-        }
+    let mut extra = TOTAL % n;
+    for (w, _) in out.iter_mut().zip(amounts).filter(|(_, &a)| a > 0) {
+        *w = (TOTAL / n + u64::from(extra > 0)) as u32;
+        extra = extra.saturating_sub(1);
     }
     out
 }

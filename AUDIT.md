@@ -34,6 +34,19 @@ Scope: `scratch-cards-program/src` (all instructions, state, utils), `engine/src
 > (`scratch-ops`), which builds every instruction with the client Solarium generates from the
 > program; their line references are to the last commit that had them.
 
+> **2026-10-20/21: prize tiers (config v3).** A card now holds a coin table (≤12 mints) and 1–4
+> prize rows (weight, tier id, amount per coin); a win draws a row by weight then a coin by weight
+> (even on v3, the old pool weights on a v2 card). A branch audit (three read-only reviews: program
+> + engine, CLI + sheet tool, app) found and fixed: the restamp window selling stale-stride cards
+> (`setup --restamp` now empties the shelf in the same tx; `publish` cuts first); collect CU
+> doubled by valuing every symbol per line (now the line's own symbols; vault 124k → 42k); the
+> casino-core bump dropping 2wpq from the admin set (both ops keys admin, `bb080f5`); and — found
+> on devnet, not by the audit — `request_collect`'s frame at 4352 bytes, over the 4 KB SBF limit,
+> aborting every collect (terms on the heap, `ee13b67`). Tickets sold under v2 keep paying under
+> their own terms, and a v2 shelf keeps selling, checked against the live mainnet shelf
+> (`tests/v2.rs`) and the frozen v2 engine (0 mismatches over 2.2M seeds). Items 7 and 10 below
+> describe the pool-era `set_card`; the v3 rules are in `src/instructions/set_card.rs`.
+
 Each item below is self-contained — location, what breaks, and what to do — so they can be
 taken in any order. Severity order is the recommended order.
 

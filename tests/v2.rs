@@ -88,7 +88,7 @@ fn v2_tickets_and_the_v2_shelf_are_valued() {
                 ];
                 let r = m.process_instruction(&ix, &accounts);
                 assert_eq!(
-                    r.raw_result.clone().map_err(|e| e != InstructionError::MissingAccount && e != InstructionError::NotEnoughAccountKeys).err(),
+                    r.raw_result.clone().map_err(|e| e != InstructionError::MissingAccount).err(),
                     Some(false),
                     "slot {i} printed={printed} seed {s}: {:?} after {} CU", r.raw_result, r.compute_units_consumed,
                 );

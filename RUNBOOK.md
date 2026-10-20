@@ -91,14 +91,31 @@ earlier run left mid-flow is finished first (`scratch-ops finish` does only that
 
 ### Retiring or adding a card
 
-`card_count` never shrinks on chain, so a retired slot cannot be deleted — the
-publisher rewrites it as a copy of the last card, and both the verifier and the app
-recognise and skip it.
+A card names its kind on chain (`kind`, its position in `KINDS` + 1), and the app names a
+card by that, never by its slot — so the shelf can drop, add or reorder cards without an
+app release. To retire one: delete it from `cards.json` and `design.json` and republish;
+`publish` cuts slots past the sheet with `SetCardCount` before it writes, so a retired card
+is never on sale while the rest lands. Its `CardDef` in `Cards.ALL` (`Symbols.kt`) can stay
+until the next app release; a kind the app has no text for is skipped by the shop.
 
-To retire a card: delete it from `cards.json` and `design.json`, delete its `CardDef`
-from `Cards.ALL` (`Symbols.kt`) in the app, then republish both clusters and rebuild the
-app. The shelf the app draws comes from the published config; the app only supplies the
-copy for a card id, so those two deletions are the whole job.
+Devnet publishes `DEVNET_CARDS` only (straight and five): devnet pays SOL alone, every tier
+offers one coin, and four plates cannot fill a losing triple or vault.
+
+### Upgrading past a layout change
+
+The program reads a shelf at whichever layout it is stamped with, and a ticket at the layout
+it was sold in — so the program goes first, the app whenever it is ready, the shelf last:
+
+```
+solana program write-buffer … && solana program upgrade …   # the shelf stays as it was; nothing breaks
+scratch-ops setup --restamp                                  # empties the shelf AND re-stamps it, one tx
+scratch-ops publish --cards-only                             # the sheet at the new layout
+scratch-ops verify
+```
+
+Between the restamp and the publish nothing is on sale, by design: a slot read at the wrong
+stride is a card nobody published. Tickets bought before the restamp still collect under the
+terms they carry. Re-stamp mainnet only once the app that reads the new layout has shipped.
 
 ---
 
@@ -125,7 +142,7 @@ One flag is load-bearing:
 
 Run the float check after any sheet change: bigger prizes mean bigger worst cases.
 
-Devnet needs none of this — its pools are SOL-only, and the stand-in tokens are minted
+Devnet needs none of this — its tiers pay SOL alone, and the stand-in tokens are minted
 by `top-up` rather than bought.
 
 ---

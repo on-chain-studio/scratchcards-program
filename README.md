@@ -26,11 +26,11 @@ and creates nothing, which is what makes the flow safe to retry.
 
 | PDA | What |
 | --- | --- |
-| `["config"]` | The shelf: every card's blocks, pay table, pool, chances — all public. Grows, never shrinks. |
+| `["config"]` | The shelf: every card's blocks, pay table, coins, prize tiers, chances — all public. Grows; `SetCardCount` takes cards off the end. |
 | `["house"]` | The game's own payer inside the rollup: sponsors each card's ephemeral rent and the VRF fee. Owns the house ledger (the payout float). Delegated to the TEE. |
 | `["jackpot"]` | Owns the jackpot ledger — the progressive pot, fed 10% of every sale. The PDA itself stays on basenet; its ledger is public and delegated. |
 | `["analytics"]` | Lifetime counters — sales, jackpots, payouts per mint — written only by the settle callbacks, so every number is settled money. Delegated; TEE reads restricted to the admins. |
-| `["card", user]` | The player's card, **ephemeral** and reused — it exists only on the rollup. Status: Bought → Requested → Revealed → Collected; a new purchase needs a collected card. Carries its own terms, copied from the shelf at purchase, so a rebalance can't rewrite a ticket someone owns, and a generation that rejects VRF answers meant for an earlier card. |
+| `["card", user]` | The player's card, **ephemeral** and reused — it exists only on the rollup. Status: Bought → Requested → Revealed → Collected; a new purchase needs a collected card. Carries its own terms, copied from the shelf at purchase and kept at the layout they were sold in (the account's size says which), so a rebalance or a re-stamp can't rewrite a ticket someone owns; and a generation that rejects VRF answers meant for an earlier card. |
 | vault: `["ledger", owner]` | Balances for player / house / jackpot, per mint (SOL is the all-zero mint at slot 0). |
 | vault: `["receipt", program, consenter]` | One in-flight payment, consented by the session key. |
 
@@ -39,23 +39,24 @@ and creates nothing, which is what makes the flow safe to retry.
 Each number is the little-endian u64 an instruction starts with, pinned per method in `src/lib.rs`
 with `#[instruction(discriminator = N)]` — the numbers the program has always had. 0 is a deployed
 no-op (the TEE admission probes send it), and so is every retired gap (5, 6, 8, 10, 11, 13, 14,
-19, 23), as it always was; anything past 32 is refused.
+19, 23), as it always was; anything past 33 is refused.
 
 | # | Name | Notes |
 | --- | --- | --- |
-| 1 | Initialize | Admin, idempotent: config shelf + house/jackpot/analytics PDAs, and the analytics TEE permission (created once, never rewritten — an update drops the program from it on the TEE). The card count never shrinks. |
+| 1 | Initialize | Admin, idempotent: config shelf + house/jackpot/analytics PDAs, and the analytics TEE permission (created once, never rewritten — an update drops the program from it on the TEE). Re-run after a layout change, it re-stamps the shelf's version and grows it to the new stride; it never lowers the card count. |
 | 2/3/4 | Delegate / Undelegate / RequestUndelegation | Admin-gated (the ops key alone, as every admin instruction here); any game PDA (house, analytics) to the TEE. |
 | 7 | CloseCard | Admin escape hatch for a stranded card; rent returns to the house. |
-| 9 | SetCard | Admin: one card of the sheet, rewritten in place. |
+| 9 | SetCard | Admin: one card of the sheet, rewritten in place or appended. |
+| 33 | SetCardCount | Admin: takes cards off the end of the shelf. Lower only — raising would publish stale bytes. |
 | 12 | CallbackReveal | The VRF's identity scoped to this program (`["identity", program]` at the VRF program) writes the 32-byte seed; status → Revealed. Scratching is pure client. |
 | 15–22, 30 | Ledger ops | Open / delegate / close / authorize / privacy / undelegate the house and jackpot ledgers; WithdrawHouse (17); ReadJackpot (21). Admin-gated. |
 | 24 | RequestPurchase | Session key consents. Receipt: price − take → house, take (10%) → jackpot. Callback = 27. |
-| 25 | RequestCollect | Evaluates the revealed card. Receipt: winnings house → player, pot → player on a jackpot line. Callback = 29. |
+| 25 | RequestCollect | Evaluates the revealed card under its own terms, at whichever layout it was sold in. Receipt: winnings house → player per coin, pot → player on a jackpot line. Callback = 29. |
 | 26 | GrowConfig | Admin: grow the shelf. |
 | 27 | ResolvePurchase | Settle callback: creates the ephemeral card, or reuses a collected one, with its terms; creates the card's private ER permission, or adds its missing members (the wallet, the vault and the casino floor as full readers); counts the sale in analytics. |
 | 28 | RequestReveal | Permissionless and retryable (from Bought *or* Requested): a scoped, high-priority request to MagicBlock VRF. |
 | 29 | ResolveCollect | Settle callback: marks the card collected; counts the payout in analytics. |
-| 31 | CloseStrayCard | Admin: drops a card of an older layout by address; a current-size card is refused. |
+| 31 | CloseStrayCard | Admin: drops a card of a layout this program no longer reads, by address; a v2- or v3-size card is a live ticket and refused. |
 | 32 | UpgradePermissions | Adds any missing member to a card's permission, by close and create. |
 
 ## The engine
@@ -75,7 +76,11 @@ What a card *is* comes from the published sheet, not from this code. `mode` and 
 roles (plate, number, mark, jackpot) decide the shape — a line, an anywhere-match, a duel
 per row, a token hunt, a grid of paying lines — and every multiple is sheet data: a pay
 entry's `mult`, the `LINEAR` flag that multiplies it by the group size, and a tier
-`factor` for a slot multiplier. Re-rating a diagonal, changing what a match pays, or
+`factor` for a slot multiplier. What a win *pays* is a prize tier drawn by weight, then
+one of that tier's coins drawn by weight (even on a v3 card; a v2 card's old pool weights),
+at the amount the tier prints for that coin — and a plate is a coin in its tier's frame, so
+a match is identical plates. The engine reads a v2 card as one tier (`parse_v2`) and deals
+it exactly as the v2 engine did. Re-rating a diagonal, changing what a match pays, or
 retiring a card is a `SetCard`, never a code change. The shelf currently publishes four
 cards; how it is balanced and published is `RUNBOOK.md`.
 
@@ -85,11 +90,14 @@ cards; how it is balanced and published is `RUNBOOK.md`.
 cargo build-sbf                              # target/deploy/scratch_cards.so
 cargo +1.89.0-sbpf-solana-v1.52 test         # engine determinism/rate tests, layout + wire pins
 cargo test --test program -- --ignored       # the built .so in Mollusk: dispatch, refusals, VRF, pot
+cargo test --test v2 --test collect_v3 -- --ignored   # the built .so collecting v2 (live mainnet shelf) and v3 tickets
 ```
 
 The `.so` must stay within the mainnet program account (323,216 bytes of ProgramData, 45 of
 them the loader's header): the rollup clones the program at its first-seen size. Check
-`ls -l target/deploy/scratch_cards.so` before any upgrade.
+`ls -l target/deploy/scratch_cards.so` before any upgrade — and that `cargo build-sbf` printed
+no `Stack offset` line: it still succeeds past one, and the instruction then aborts on chain
+with `ProgramFailedToComplete` and no log (it did, 2026-10-20).
 
 Operating the live game — balancing cards, publishing the sheet, house float, app
 builds — is `RUNBOOK.md`.

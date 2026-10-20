@@ -407,7 +407,7 @@ mod tests {
         broken(&|c| c.blocks.reverse());                                 // jackpot no longer last
         broken(&|c| c.tiers.push(InitTier { factor: 1, weight: 0 }));    // a x1 multiplier
         broken(&|c| c.jackpot_hit = u32::MAX);                           // bands over 2^32
-        broken(&|c| c.tokens.truncate(0));                               // no coins at all
+        broken(&|c| c.tokens.clear());                                   // no coins at all
         broken(&|c| c.tokens[1] = c.tokens[0]);                          // two coins share a mint
     }
 
