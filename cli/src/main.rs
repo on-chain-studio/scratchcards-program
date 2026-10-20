@@ -108,8 +108,9 @@ enum Command {
         house_slots: u16,
         #[arg(long, default_value_t = 4)]
         jackpot_slots: u16,
-        /// Send Initialize even though the config exists: after an upgrade that changes the shelf's
-        /// layout, it re-stamps the version and grows the shelf to the new stride. Nothing else.
+        /// After an upgrade that changes the shelf's layout: take every card off the shelf and
+        /// re-stamp the version, in one transaction, so no card is ever read at the wrong stride
+        /// and nothing can be bought until `publish` puts the sheet back.
         #[arg(long)]
         restamp: bool,
     },
@@ -281,6 +282,15 @@ async fn publish(chain: &Chain, path: PathBuf, cards_only: bool, force: bool) ->
 
     println!("writing the card sheet…");
     let (count, slots) = shelf(chain).await?;
+    // Cut first: a slot past the sheet must not stay on sale while the rest is written, nor be
+    // left on sale by a write that fails part-way.
+    if cards.len() < count as usize {
+        let set = scratch_cards::instructions::set_card_count::SetCardCount { count: cards.len() as u8 };
+        let ix = built(generated::ScratchCards::set_card_count_instruction(admin, config(), set))?;
+        let signature = chain.base.send(&[ix], &[&chain.admin]).await?;
+        println!("  ✅ shelf cut from {count} to {} cards  {}", cards.len(), short(signature));
+    }
+    let count = count.min(cards.len() as u64);
     let send = async |index: usize, card: &sheet::Card, label: String| -> Result<()> {
         let set = card.set_card(index as u8, &mints, mainnet)?;
         set.validate().map_err(|e| anyhow::anyhow!("{}: the program would refuse it ({e:?})", card.id))?;
@@ -296,12 +306,6 @@ async fn publish(chain: &Chain, path: PathBuf, cards_only: bool, force: bool) ->
     };
     for (index, card) in cards.iter().enumerate() {
         send(index, card, format!("card {}", card.id)).await?;
-    }
-    if cards.len() < count as usize {
-        let set = scratch_cards::instructions::set_card_count::SetCardCount { count: cards.len() as u8 };
-        let ix = built(generated::ScratchCards::set_card_count_instruction(admin, config(), set))?;
-        let signature = chain.base.send(&[ix], &[&chain.admin]).await?;
-        println!("  ✅ shelf cut from {count} to {} cards  {}", cards.len(), short(signature));
     }
     if !mainnet && !cards_only {
         let mut record: Value = serde_json::from_str(&std::fs::read_to_string(sheet::devnet_path())?)?;
@@ -519,8 +523,12 @@ async fn main() -> Result<()> {
                 Initialize { card_count: 0 },
             ))?;
             if restamp {
-                let signature = chain.base.send(&[initialize], &[&chain.admin]).await?;
-                println!("config re-stamped v{}  {}", scratch_cards::state::config::VERSION, short(signature));
+                let empty = built(generated::ScratchCards::set_card_count_instruction(
+                    admin, config(), scratch_cards::instructions::set_card_count::SetCardCount { count: 0 },
+                ))?;
+                let signature = chain.base.send(&[empty, initialize], &[&chain.admin]).await?;
+                println!("shelf emptied, config re-stamped v{}  {}", scratch_cards::state::config::VERSION, short(signature));
+                println!("nothing is on sale until: scratch-ops publish --cards-only");
                 return Ok(());
             }
             let plan = Setup {
