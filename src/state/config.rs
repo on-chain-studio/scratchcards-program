@@ -1,5 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use casino_core::shelf::Shelf;
+use casino_core::chain::*;
+use casino_core::shelf::{Header, Shelf};
+use casino_core::CoreError;
 
 pub const DISCRIMINATOR: u64 = 1;
 pub const VERSION:       u64 = 3;
@@ -169,5 +171,61 @@ impl CardConfig {
             .iter()
             .map(|b| b.count as usize)
             .sum()
+    }
+}
+
+/// A v2 shelf's card: one pool of coins, each with an amount and a draw weight. Never written any
+/// more; read so a v2 shelf keeps selling, and v2 tickets keep paying, exactly as they did.
+pub const VERSION_V2: u64 = 2;
+pub const CARD_SIZE_V2: usize = 992;
+
+/// A card's terms as a shelf publishes them or a ticket carries them: at the layout they were
+/// written in. The engine deals both — a v2 card as one tier — with the same results v2 had.
+#[derive(Clone, Copy)]
+pub enum Terms {
+    V2([u8; CARD_SIZE_V2]),
+    V3(CardConfig),
+}
+
+impl Terms {
+    pub fn price_lamports(&self) -> u64 {
+        match self {
+            Terms::V2(b) => u64::from_le_bytes(b[..8].try_into().unwrap()),
+            Terms::V3(c) => c.price_lamports,
+        }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            Terms::V2(b) => b,
+            Terms::V3(c) => bytemuck::bytes_of(c),
+        }
+    }
+
+    /// The mint of coin `i` — a v2 card's pool entry, a v3 card's coin table.
+    pub fn mint(&self, i: usize) -> Option<[u8; 32]> {
+        match self {
+            Terms::V2(b) => (i < b[21] as usize).then(|| b[512 + i * 48..544 + i * 48].try_into().unwrap()),
+            Terms::V3(c) => c.tokens().get(i).copied(),
+        }
+    }
+}
+
+/// The published card at `id`, at whichever layout the shelf is stamped with: v3, or a v2 shelf
+/// not yet re-stamped. Nothing past the published count is ever read.
+pub fn shelf_card(account: &AccountInfo, id: u64) -> Result<Terms, ProgramError> {
+    let data = account.try_borrow()?;
+    let header = bytemuck::try_from_bytes::<Header>(data.get(..Config::HEADER).ok_or(ProgramError::InvalidAccountData)?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    if id >= header.count {
+        return Err(CoreError::NotOnShelf.into());
+    }
+    let (size, version) = (if header.version == VERSION_V2 { CARD_SIZE_V2 } else { CARD_SIZE }, header.version);
+    let at = Config::HEADER + id as usize * size;
+    let bytes = data.get(at..at + size).ok_or(CoreError::NotOnShelf)?;
+    match version {
+        VERSION => Ok(Terms::V3(*bytemuck::try_from_bytes::<CardConfig>(bytes).map_err(|_| ProgramError::InvalidAccountData)?)),
+        VERSION_V2 => Ok(Terms::V2(bytes.try_into().unwrap())),
+        _ => Err(ProgramError::InvalidAccountData),
     }
 }

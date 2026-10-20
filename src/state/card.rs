@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use casino_core::chain::*;
 
-use crate::state::config::CardConfig;
+use crate::state::config::{CardConfig, Terms, CARD_SIZE_V2};
 
 pub const DISCRIMINATOR: u64 = 3;
 pub const VERSION:       u64 = 1;
@@ -32,20 +32,47 @@ pub struct Card {
 impl Card {
     pub const SIZE: usize = size_of::<Self>();
 
-    /// A card sold with its terms printed after it.
+    /// A card sold with its terms printed after it, then its generation. A card keeps the layout
+    /// of the terms it was sold under: v3 terms, or a v2 shelf's — the account's size says which.
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<CardConfig>();
     pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
+    pub const WITH_TERMS_V2: usize = Self::SIZE + CARD_SIZE_V2;
+    pub const PERSISTENT_SIZE_V2: usize = Self::WITH_TERMS_V2 + 8;
+
+    /// The size a card account holding `terms` takes.
+    pub fn persistent_size(terms: &Terms) -> usize {
+        match terms {
+            Terms::V2(_) => Self::PERSISTENT_SIZE_V2,
+            Terms::V3(_) => Self::PERSISTENT_SIZE,
+        }
+    }
+
+    /// How long the printed terms are, by the account's size; `None` for a card without terms.
+    fn terms_len(len: usize) -> Option<usize> {
+        match len {
+            Self::WITH_TERMS | Self::PERSISTENT_SIZE => Some(size_of::<CardConfig>()),
+            Self::WITH_TERMS_V2 | Self::PERSISTENT_SIZE_V2 => Some(CARD_SIZE_V2),
+            _ => None,
+        }
+    }
+
+    /// Whether an account of this size is a card this program sells.
+    pub fn is_card_size(len: usize) -> bool {
+        Self::terms_len(len).is_some()
+    }
 
     // After the terms, so existing offsets are unchanged.
     pub fn generation(account: &AccountInfo) -> Result<u64, ProgramError> {
         let data = account.try_borrow()?;
-        let Some(bytes) = data.get(Self::WITH_TERMS..Self::PERSISTENT_SIZE) else { return Ok(0) };
+        let Some(at) = Self::terms_len(data.len()).map(|n| Self::SIZE + n) else { return Ok(0) };
+        let Some(bytes) = data.get(at..at + 8) else { return Ok(0) };
         Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     pub fn set_generation(account: &AccountInfo, generation: u64) -> ProgramResult {
         let mut data = account.try_borrow_mut_data()?;
-        let bytes = data.get_mut(Self::WITH_TERMS..Self::PERSISTENT_SIZE).ok_or(ProgramError::InvalidAccountData)?;
+        let at = Self::terms_len(data.len()).map(|n| Self::SIZE + n).ok_or(ProgramError::InvalidAccountData)?;
+        let bytes = data.get_mut(at..at + 8).ok_or(ProgramError::InvalidAccountData)?;
         bytes.copy_from_slice(&generation.to_le_bytes());
         Ok(())
     }
@@ -74,21 +101,26 @@ impl Card {
         Ok(s)
     }
 
-    /// The terms this card was sold under, or `None` for a pre-terms card (falls back to the shelf).
-    pub fn terms<'a>(account: &AccountInfo) -> Result<Option<&'a CardConfig>, ProgramError> {
-        if account.data_len() < Self::WITH_TERMS { return Ok(None); }
+    /// The terms this card was sold under, at the layout they were printed in, or `None` for a
+    /// pre-terms card (falls back to the shelf).
+    pub fn terms(account: &AccountInfo) -> Result<Option<Terms>, ProgramError> {
         let data = account.try_borrow()?;
-        bytemuck::try_from_bytes::<CardConfig>(&data[Self::SIZE..Self::WITH_TERMS])
-            .map_err(|_| ProgramError::InvalidAccountData)
-            .map(|r| unsafe { Some(&*(r as *const CardConfig)) })
+        let Some(n) = Self::terms_len(data.len()) else { return Ok(None) };
+        let bytes = &data[Self::SIZE..Self::SIZE + n];
+        Ok(Some(if n == CARD_SIZE_V2 {
+            Terms::V2(bytes.try_into().unwrap())
+        } else {
+            Terms::V3(*bytemuck::try_from_bytes::<CardConfig>(bytes).map_err(|_| ProgramError::InvalidAccountData)?)
+        }))
     }
 
-    pub fn write_terms(account: &AccountInfo, terms: &CardConfig) -> ProgramResult {
-        if account.data_len() < Self::WITH_TERMS {
+    pub fn write_terms(account: &AccountInfo, terms: &Terms) -> ProgramResult {
+        let bytes = terms.bytes();
+        let mut data = account.try_borrow_mut_data()?;
+        if Self::terms_len(data.len()) != Some(bytes.len()) {
             return Err(ProgramError::AccountDataTooSmall);
         }
-        let mut data = account.try_borrow_mut_data()?;
-        data[Self::SIZE..Self::WITH_TERMS].copy_from_slice(bytemuck::bytes_of(terms));
+        data[Self::SIZE..Self::SIZE + bytes.len()].copy_from_slice(bytes);
         Ok(())
     }
 }

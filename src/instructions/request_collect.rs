@@ -4,7 +4,7 @@ use casino_core::{pda, receipt, vault, CoreError};
 
 use crate::error::GameError;
 use crate::state::card::{Card, CardStatus};
-use crate::state::Config;
+use crate::state::config;
 use crate::utils::engine;
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -63,10 +63,10 @@ impl RequestCollect {
         };
 
         let terms = match Card::terms(card_account)? {
-            Some(t) => *t,
-            None => *Config::item(config_account, card_id)?,
+            Some(t) => t,
+            None => config::shelf_card(config_account, card_id)?,
         };
-        let wins = engine::evaluate(&terms, &seed)?;
+        let wins = engine::evaluate_terms(&terms, &seed)?;
 
         let mut movements = Vec::new();
         {
@@ -74,7 +74,7 @@ impl RequestCollect {
             for (i, amount) in wins.amounts.iter().enumerate() {
                 if *amount == 0 { continue; }
                 movements.push(receipt::Movement {
-                    mint: Pubkey::new_from_array(c.tokens[i]),
+                    mint: Pubkey::new_from_array(c.mint(i).ok_or(ProgramError::InvalidAccountData)?),
                     amount: *amount,
                     from: 1,
                     to: 0,

@@ -6,7 +6,7 @@ use casino_core::{pda, permission, receipt, CoreError};
 use crate::constants::{JACKPOT_SHARE_BP, PRIVATE_CASINO};
 use crate::state::analytics::Analytics;
 use crate::state::card::{self, Card, CardStatus};
-use crate::state::Config;
+use crate::state::config;
 
 /// Turns a settled receipt into a card. The seed comes later via `RequestReveal`, so a failed VRF
 /// request can't unwind a paid purchase.
@@ -59,14 +59,17 @@ impl ResolvePurchase {
             (Card::generation(card_account)?.checked_add(1).ok_or(ProgramError::ArithmeticOverflow)?, previous.seed)
         };
 
-        let terms = *Config::item(config_account, card_id)?;
+        let terms = config::shelf_card(config_account, card_id)?;
 
-        if card_account.data_len() != 0 && card_account.data_len() < Card::PERSISTENT_SIZE {
+        // A card holds its terms at their own layout, so one bought under the other layout is
+        // re-made at this one's size.
+        let size = Card::persistent_size(&terms);
+        if card_account.data_len() != 0 && card_account.data_len() != size {
             receipt::close(magic_program, house, card_account, ephemeral_vault, house_bump)?;
         }
         if card_account.data_len() == 0 {
             create_ephemeral_account(house, card_account, ephemeral_vault, magic_program,
-                Card::PERSISTENT_SIZE as u32,
+                size as u32,
                 &[&[b"house", &[house_bump]], &[b"card", self.human.as_ref(), &[card_bump]]])?;
         }
         Card::set_generation(card_account, generation)?;
@@ -90,7 +93,7 @@ impl ResolvePurchase {
 
         // This callback only fires on a settled payment, so the count is settled money.
         pda::validate(program_id, analytics_account, &[b"analytics"])?;
-        let price = terms.price_lamports;
+        let price = terms.price_lamports();
         let take = price.saturating_mul(JACKPOT_SHARE_BP) / 10_000;
         let a = Analytics::load_mut(analytics_account)?;
         a.lamports_in = a.lamports_in.saturating_add(price);

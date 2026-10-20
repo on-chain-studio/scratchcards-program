@@ -3,7 +3,7 @@
 
 use casino_core::chain::*;
 
-use crate::state::config::CardConfig;
+use crate::state::config::{CardConfig, Terms};
 
 pub use scratch_engine::{Deal, Outcome, Winnings};
 
@@ -66,4 +66,15 @@ pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, ProgramError> {
 
 pub fn evaluate(card: &CardConfig, seed: &[u8; 32]) -> Result<Winnings, ProgramError> {
     scratch_engine::evaluate(&shared(card), seed).map_err(bad)
+}
+
+/// A card at either layout: a v2 card is read by the engine as one tier, dealing as v2 did.
+pub fn evaluate_terms(terms: &Terms, seed: &[u8; 32]) -> Result<Winnings, ProgramError> {
+    match terms {
+        Terms::V3(c) => evaluate(c, seed),
+        Terms::V2(b) => {
+            let card = scratch_engine::parse_v2(b).ok_or(ProgramError::InvalidAccountData)?;
+            scratch_engine::evaluate(&card, seed).map_err(bad)
+        }
+    }
 }

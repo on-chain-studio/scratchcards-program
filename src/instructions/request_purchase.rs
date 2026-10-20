@@ -3,7 +3,7 @@ use casino_core::chain::*;
 use casino_core::{pda, receipt, vault, CoreError};
 
 use crate::constants::JACKPOT_SHARE_BP;
-use crate::state::Config;
+use crate::state::config;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestPurchase {
@@ -43,7 +43,7 @@ impl RequestPurchase {
             return Err(CoreError::InvalidPDA.into());
         }
 
-        let price = Config::item(config_account, self.card_id)?.price_lamports;
+        let price = config::shelf_card(config_account, self.card_id)?.price_lamports();
         let take = price.saturating_mul(JACKPOT_SHARE_BP) / 10_000;
         let sol = Pubkey::default();
 
