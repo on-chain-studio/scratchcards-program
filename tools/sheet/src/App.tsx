@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import rawPrices from '@prices'
 import { onDisk, seed, readDraft, writeDraft, clearDraft, saveToDisk, same,
   designOnDisk, readDesign, writeDesign, clearDesign, saveDesign, readPick, writePick } from './model/store'
-import { Card, Block, Pay, Design, TARGET_RTP, TOTAL, MCAP, DEFAULT_LADDER, normalize, bodyLen, popcount, settleRoll, jackpotHitFor } from './model/types'
+import { Card, Block, Pay, Design, TARGET_RTP, TOTAL, PRIZE_ROWS, DEFAULT_LADDER, normalize, bodyLen, popcount, settleRoll, jackpotHitFor } from './model/types'
 import { analyse, Prices } from './model/analytics'
 import { validate } from './model/validate'
 import { toAuthoring, toJson } from './model/encode'
 import { solveOdds, solveLadder, solveShelf, solveTargets, ladderSplit, matchingAmount, nice } from './model/solve'
 import { CardPreview } from './ui/CardPreview'
-import { PoolTable, PrizeList } from './ui/Tables'
+import { PrizeTable, PrizeList } from './ui/Tables'
 import { BlockTable, PayTable } from './ui/Editors'
 import { fmt, usd, pct } from './ui/format'
 import { NumberField } from './ui/Weight'
@@ -159,7 +159,7 @@ export function App() {
     setCards(cs => cs.map((c, i) => (i === pick ? settleRoll(next) : c)))
 
   /**
-   * The machine-owned numbers — pool amounts, pool weights, pay weights — are solver outputs:
+   * The machine-owned numbers — prize amounts, tier weights, pay weights — are solver outputs:
    * the five design knobs plus the card's shape decide them, and editing them by hand makes
    * the sheet and the curve two competing truths (every "prizes keep drifting" episode was
    * that). Hand-tuning stays possible, but as an explicit unlock, not the default.
@@ -184,49 +184,42 @@ export function App() {
    * Prizes do not follow automatically: they are multiples of the price, so re-pricing changes
    * what the sheet returns until the ladder is rebuilt. That is deliberately a separate button —
    * the amounts are rounded to numbers a player can read, and silently re-rounding them on every
-   * keystroke would churn the whole pool while you typed.
+   * keystroke would churn every prize while you typed.
    */
   const setPrice = (sol: number) => {
     const priceLamports = Math.round(sol * 1e9)
     patch({ ...card, priceLamports, jackpotHitWeight: jackpotHitFor(priceLamports) })
   }
 
-  // ── pool
-  const setPoolAmount = (i: number, amount: number) => guard('A printed prize', () =>
-    patch({ ...card, pool: card.pool.map((p, j) => (j === i ? { ...p, amount } : p)) }))
+  // ── prize tiers
+  const withAmount = (r: number, t: number, amount: number): Card => ({
+    ...card,
+    prizes: card.prizes.map((row, i) => (i !== r ? row : { ...row, amounts: row.amounts.map((a, j) => (j === t ? amount : a)) })),
+  })
+  const setPrizeAmount = (r: number, t: number, amount: number) => guard('A printed prize', () =>
+    patch(withAmount(r, t, amount)))
 
-  /** A new token arrives live: a share like the rarest existing one, and a comparable prize. */
+  /** Offering a coin in a tier prints it at about the tier's value; withdrawing it zeroes it. */
+  const offerCoin = (r: number, t: number, on: boolean) =>
+    patch(withAmount(r, t, on ? matchingAmount(card, PRICES, card.tokens[t], r) : 0))
+
+  /** A new coin arrives live in low, mid and high, at about what each of those tiers pays. */
   const addToken = (token: string) => {
-    const weight = Math.min(...card.pool.map(p => p.weight).filter(w => w > 0), TOTAL)
-    const pool = [...card.pool, { token, weight, amount: matchingAmount(card, PRICES, token) }]
-    const fixed = normalize(pool.map(p => p.weight))
-    patch({ ...card, pool: pool.map((p, i) => ({ ...p, weight: fixed[i] })) })
-  }
-
-  const removeToken = (i: number) =>
-    patch({ ...card, pool: card.pool.filter((_, j) => j !== i) })
-
-  /** Reorder the ladder — position decides the weight, so moving a token changes its rarity. */
-  const reorderToken = (from: number, to: number) => {
-    if (from === to) return
-    const pool = [...card.pool]
-    const [moved] = pool.splice(from, 1)
-    pool.splice(to, 0, moved)
-    patch({ ...card, pool })
-  }
-
-  /** Cheapest prize first, so the ladder reads the way the weights are about to be laid on it. */
-  const sortByValue = () => {
-    const value = (p: { token: string; amount: number }) =>
-      (p.amount / 10 ** (p.token === 'SOL' ? 9 : 0)) * (PRICES[p.token] ?? 0)
-    patch({ ...card, pool: [...card.pool].sort((a, b) => value(a) - value(b)) })
-  }
-
-  /** Deepest token last, so the rarest slot goes to whatever the house can most easily buy. */
-  const sortByCap = () =>
+    const top = PRIZE_ROWS - 1
     patch({
       ...card,
-      pool: [...card.pool].sort((a, b) => (MCAP[a.token] ?? 0) - (MCAP[b.token] ?? 0)),
+      tokens: [...card.tokens, token],
+      prizes: card.prizes.map((row, r) => ({
+        ...row, amounts: [...row.amounts, r === top ? 0 : matchingAmount(card, PRICES, token, r)],
+      })),
+    })
+  }
+
+  const removeToken = (t: number) =>
+    patch({
+      ...card,
+      tokens: card.tokens.filter((_, j) => j !== t),
+      prizes: card.prizes.map(row => ({ ...row, amounts: row.amounts.filter((_, j) => j !== t) })),
     })
 
   /**
@@ -247,11 +240,11 @@ export function App() {
       solveLadder(card, PRICES, minX, maxX, bend, TARGET_RTP, topOneIn)
     patch({
       ...card,
-      pool: card.pool.map((p, i) => ({ ...p, amount: amounts[i], weight: weights[i] })),
+      prizes: card.prizes.map((_, r) => ({ weight: weights[r], amounts: amounts[r] })),
       pays: card.pays.map((p, i) => ({ ...p, weight: payWeights[i] })),
     })
     setStatus(overrun > 1
-      ? `pay table alone spans ${(overrun * (maxX / minX)).toFixed(0)}×, so every token takes the ` +
+      ? `pay table alone spans ${(overrun * (maxX / minX)).toFixed(0)}×, so every tier takes the ` +
         `same value and the top prize lands at ${Math.round(minX * overrun * (maxX / minX))}×, not ${Math.round(maxX)}× ` +
         `— shorten the pay ladder or raise max`
       : Math.abs(rtp - TARGET_RTP) > 0.02
@@ -276,12 +269,12 @@ export function App() {
       // the solved max is derived, never stored: writing it back would ratchet the design down
       const { bend, ladder: L } = solveShelf(c, PRICES, d, TARGET_RTP)
       solved[c.id] = { bend }
-      const reprinted = c.pool.filter((p, i) => p.amount !== L.amounts[i]).map(p => p.token)
+      const reprinted = c.tokens.filter((_, t) => c.prizes.some((row, r) => row.amounts[t] !== L.amounts[r][t]))
       if (reprinted.length) moved.push(`${c.id}: ${reprinted.join(' ')}`)
       return settleRoll({
         ...c,
         jackpotHitWeight: jackpotHitFor(c.priceLamports),
-        pool: c.pool.map((p, i) => ({ ...p, amount: L.amounts[i], weight: L.weights[i] })),
+        prizes: c.prizes.map((_, r) => ({ weight: L.weights[r], amounts: L.amounts[r] })),
         pays: c.pays.map((p, i) => ({ ...p, weight: L.payWeights[i] })),
       })
     })
@@ -292,9 +285,9 @@ export function App() {
   }
 
 
-  const renormalisePool = () => guard('The pool partition', () => {
-    const fixed = normalize(card.pool.map(p => p.weight))
-    patch({ ...card, pool: card.pool.map((p, i) => ({ ...p, weight: fixed[i] })) })
+  const renormaliseTiers = () => guard('The tier partition', () => {
+    const fixed = normalize(card.prizes.map(r => r.weight))
+    patch({ ...card, prizes: card.prizes.map((r, i) => ({ ...r, weight: fixed[i] })) })
   })
 
   /**
@@ -310,7 +303,7 @@ export function App() {
 
 
   const snapAmounts = () => guard('The printed prizes', () =>
-    patch({ ...card, pool: card.pool.map(p => ({ ...p, amount: nice(p.amount, p.token) })) }))
+    patch({ ...card, prizes: card.prizes.map(r => ({ ...r, amounts: r.amounts.map((a, t) => nice(a, card.tokens[t])) })) }))
 
   // ── pays: shape (scope, min, mult, flags) is the designer's; weights are the solver's
   const setPay = (i: number, next: Partial<Pay>) => {
@@ -408,7 +401,7 @@ export function App() {
             title="the solver owns prizes and weights; unlock to override them by hand">
             {handTune ? 'Hand-tune 🔓' : 'Hand-tune 🔒'}
           </button>
-          {handTune && <button className="tab" onClick={renormalisePool}>Renormalise pool</button>}
+          {handTune && <button className="tab" onClick={renormaliseTiers}>Renormalise tiers</button>}
           {handTune && <button className="tab" onClick={snapAmounts}>Snap prizes</button>}
           <button className="tab" onClick={updatePrices} disabled={pricing}
             title="re-pull token prices from the live feed">
@@ -505,14 +498,10 @@ export function App() {
 
       <div className="grid cols-2" style={{ marginBottom: 14 }}>
         <div className="card">
-          <h2>Pool</h2>
-          <PoolTable card={card} summary={summary} prices={PRICES}
-            onAmount={setPoolAmount}
-            onAddToken={addToken} onRemoveToken={removeToken} onReorder={reorderToken} />
-          <div className="poolsolve">
-            <button className="tab" onClick={sortByValue}>Order by prize value</button>
-            <button className="tab" onClick={sortByCap}>Order by market cap</button>
-          </div>
+          <h2>Prize tiers</h2>
+          <PrizeTable card={card} summary={summary} prices={PRICES}
+            onAmount={setPrizeAmount} onOffer={offerCoin}
+            onAddToken={addToken} onRemoveToken={removeToken} />
           <div className="poolsolve">
             <label>
               Ticket
@@ -572,25 +561,26 @@ export function App() {
           </details>
           <div className="note" style={{ marginTop: 6 }}>
             {(() => {
-              const { rungs, tiers, pay, pool, top } = ladderSplit(card, minX, maxX)
+              const { rungs, tiers, pay, prizes, top } = ladderSplit(card, minX, maxX)
               return (
                 <>
                   Spread: rungs <strong>{fmt(rungs, 1)}×</strong> · multiplier tiers{' '}
-                  <strong>{fmt(tiers, 1)}×</strong> · pool <strong>{fmt(pool, 2)}×</strong>
+                  <strong>{fmt(tiers, 1)}×</strong> · prize tiers <strong>{fmt(prizes, 2)}×</strong>
                   {' '}→ top prize <strong>{fmt(top, 0)}×</strong>
-                  {pool <= 1 && (
+                  {prizes <= 1 && (
                     <> — the pay table alone spans {fmt(pay, 0)}×, past the {Math.round(maxX)}× you
-                    asked for, so every token takes the same value. Shorten whichever of the two is
-                    larger to give the pool room back.</>
+                    asked for, so every tier takes the same value. Shorten whichever of the two is
+                    larger to give the tiers room back.</>
                   )}
                 </>
               )
             })()}
           </div>
           <div className="note">
-            The ends pin the cheapest and dearest token; the rest interpolate. <strong>Bend</strong>
-            {' '}decides how the weight sits on that ladder — 0 uniform, 1 equal share of return per
-            token, above 1 piles the mass onto the cheap end so most wins are small. Prizes and pool
+            The ends pin the low and top tier; mid and high interpolate, and every coin a tier offers
+            prints that tier's value. <strong>Bend</strong>
+            {' '}decides how the weight sits on the tiers — 0 uniform, 1 equal share of return per
+            tier, above 1 piles the mass onto the low tier so most wins are small. Prizes and tier
             weights come out of this; RTP is then landed on the pay table, so the card pays more or
             less often and no printed prize moves.
           </div>

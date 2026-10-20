@@ -103,7 +103,7 @@ export function parseSheet(text: string): Card[] {
     if (typeof c?.id !== 'string') throw new Error(`${where}: missing id`)
     if (c.mode !== 'count' && c.mode !== 'compare') throw new Error(`${where}: mode must be count or compare`)
     if (typeof c.priceLamports !== 'number') throw new Error(`${where}: missing priceLamports`)
-    for (const key of ['blocks', 'pays', 'pool', 'tiers'] as const) {
+    for (const key of ['blocks', 'pays', 'tiers', 'tokens', 'prizes'] as const) {
       if (!Array.isArray(c[key])) throw new Error(`${where}: ${key} must be an array`)
     }
     if (!Array.isArray(c.modeArgs) || c.modeArgs.length !== 4) {

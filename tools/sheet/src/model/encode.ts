@@ -1,4 +1,4 @@
-import { Card, TOTAL, MARKED, LINEAR, DISTINCT, MULT_OK } from './types'
+import { Card, TOTAL, MARKED, LINEAR, DISTINCT, MULT_OK, ROW_NAMES } from './types'
 
 const pct = (n: number) => `${((n / TOTAL) * 100).toFixed(4)}%`
 const int = (n: number) => n.toLocaleString('en-US').replace(/,/g, '_')
@@ -18,7 +18,7 @@ const hex = (n: number) => `0x${n.toString(16).toUpperCase().padStart(3, '0')}`
  */
 const EXPORTED = [
   'id', 'name', 'mode', 'roll', 'priceLamports', 'modeArgs',
-  'jackpotHitWeight', 'jackpotNearWeight', 'blocks', 'pays', 'tiers', 'pool',
+  'jackpotHitWeight', 'jackpotNearWeight', 'blocks', 'pays', 'tiers', 'tokens', 'prizes',
 ]
 
 /** The card as a literal to paste into the sheet the way `rebalance.mjs` prints today. */
@@ -64,12 +64,12 @@ export function toAuthoring(card: Card): string {
     L.push('  tiers: [],')
   }
 
-  L.push('  pool: [')
-  const pad = Math.max(...card.pool.map(p => p.token.length))
-  for (const p of card.pool) {
-    L.push(`    { ${(p.token + ',').padEnd(pad + 1)} weight: ${int(p.weight).padStart(13)}, ` +
-      `amount: ${int(p.amount)} },   // ${pct(p.weight)}`)
-  }
+  L.push(`  tokens: [${card.tokens.map(t => `'${t}'`).join(', ')}],`)
+  L.push('  prizes: [')
+  card.prizes.forEach((r, i) => {
+    L.push(`    { weight: ${int(r.weight).padStart(13)}, amounts: [${r.amounts.map(int).join(', ')}] },` +
+      `   // ${ROW_NAMES[i]} ${pct(r.weight)}`)
+  })
   L.push('  ],')
   L.push('}')
   return L.join('\n')

@@ -1,30 +1,36 @@
 import { useState } from 'react'
-import { Card, MAX_POOL, whole } from '../model/types'
+import { Card, MAX_TOKENS, ROW_NAMES, TOTAL, whole } from '../model/types'
 import { Summary, Prices } from '../model/analytics'
 import { isNice, nice } from '../model/solve'
 import { fmt, usd, pct, oneIn } from './format'
 import { AmountInput } from './Weight'
 
-export function PoolTable({
-  card, summary, prices, onAmount, onAddToken, onRemoveToken, onReorder,
+/**
+ * The prize tiers: one column per tier, one row per coin. A cell is what that coin prints when a
+ * win lands in that tier; an empty cell is a coin the tier doesn't offer. Inside a tier the coin
+ * is drawn uniformly, so a tier's coins should all be worth about its value.
+ */
+export function PrizeTable({
+  card, summary, prices, onAmount, onOffer, onAddToken, onRemoveToken,
 }: {
   card: Card
   summary: Summary
   prices: Prices
-  onAmount: (index: number, amount: number) => void
+  onAmount: (row: number, token: number, amount: number) => void
+  onOffer: (row: number, token: number, on: boolean) => void
   onAddToken: (token: string) => void
-  onRemoveToken: (index: number) => void
-  onReorder: (from: number, to: number) => void
+  onRemoveToken: (token: number) => void
 }) {
-  const [drag, setDrag] = useState<number | null>(null)
-  const [over, setOver] = useState<number | null>(null)
-  const [grip, setGrip] = useState(false)
-  const spare = Object.keys(prices)
-    .filter(t => !card.pool.some(p => p.token === t))
-    .sort()
-  const perToken = new Map<number, number>()
+  const spare = Object.keys(prices).filter(t => !card.tokens.includes(t)).sort()
+  const perTier = new Map<number, number>()
+  const perCoin = new Map<number, number>()
   for (const row of summary.rows) {
-    perToken.set(row.poolIndex, (perToken.get(row.poolIndex) ?? 0) + row.rtp)
+    perTier.set(row.rowIndex, (perTier.get(row.rowIndex) ?? 0) + row.rtp)
+    perCoin.set(row.tokenIndex, (perCoin.get(row.tokenIndex) ?? 0) + row.rtp)
+  }
+  const times = (token: string, units: number) => {
+    const price = prices[token]
+    return price === undefined || summary.priceUsd <= 0 ? '—' : `${fmt((whole(token, units) * price) / summary.priceUsd, 2)}×`
   }
 
   return (
@@ -32,92 +38,79 @@ export function PoolTable({
       <table>
         <thead>
           <tr>
-            <th />
-            <th>Token</th>
-            <th>Prize</th>
+            <th>Coin</th>
             <th>Price</th>
-            <th>Worth</th>
-            <th>× ticket</th>
+            {ROW_NAMES.map((name, r) => (
+              <th key={name} title="the tier's draw chance, given a win">
+                {name} <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{pct((card.prizes[r]?.weight ?? 0) / TOTAL, 1)}</span>
+              </th>
+            ))}
             <th>RTP</th>
             <th />
           </tr>
         </thead>
         <tbody>
-          {card.pool.map((entry, i) => {
-            const price = prices[entry.token]
-            const amount = whole(entry.token, entry.amount)
-            return (
-              <tr
-                key={entry.token}
-                draggable={grip}
-                className={[
-                  drag === i ? 'dragging' : '',
-                  over === i && drag !== null && drag !== i ? (drag < i ? 'drop-below' : 'drop-above') : '',
-                ].filter(Boolean).join(' ')}
-                onDragStart={() => setDrag(i)}
-                onDragOver={e => { e.preventDefault(); setOver(i) }}
-                onDrop={e => {
-                  e.preventDefault()
-                  if (drag !== null && drag !== i) onReorder(drag, i)
-                  setDrag(null); setOver(null); setGrip(false)
-                }}
-                onDragEnd={() => { setDrag(null); setOver(null); setGrip(false) }}
-              >
-                <td
-                  className="grip"
-                  title="drag to move along the ladder — higher is commoner"
-                  onMouseDown={() => setGrip(true)}
-                  onMouseUp={() => setGrip(false)}
-                >
-                  ⠿
-                </td>
-                <td>{entry.token}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <AmountInput token={entry.token} units={entry.amount} onChange={u => onAmount(i, u)} />
-                  {!isNice(entry.amount, entry.token) && (
-                    <button
-                      className="chip warn"
-                      title={`Nearest printable prize is ${fmt(whole(entry.token, nice(entry.amount, entry.token)), 4)}`}
-                      onClick={() => onAmount(i, nice(entry.amount, entry.token))}
-                    >
-                      not round
-                    </button>
-                  )}
-                </td>
-                <td style={{ color: 'var(--muted)' }}>
-                  {price === undefined ? '—' : usd(price)}
-                </td>
-                <td>{price === undefined ? '—' : usd(amount * price)}</td>
-                <td style={{ fontWeight: 600 }}>
-                  {price === undefined || summary.priceUsd <= 0
-                    ? '—'
-                    : `${fmt((amount * price) / summary.priceUsd, 2)}×`}
-                </td>
-                <td>{pct(perToken.get(i) ?? 0, 2)}</td>
-                <td>
-                  <button className="mini" title="remove token"
-                    disabled={card.pool.length <= 1}
-                    onClick={() => onRemoveToken(i)}>×</button>
-                </td>
-              </tr>
-            )
-          })}
+          {card.tokens.map((token, t) => (
+            <tr key={token}>
+              <td>{token}</td>
+              <td style={{ color: 'var(--muted)' }}>{prices[token] === undefined ? '—' : usd(prices[token])}</td>
+              {card.prizes.map((row, r) => {
+                const units = row.amounts[t] ?? 0
+                if (units <= 0) {
+                  return (
+                    <td key={r}>
+                      <button className="mini" title={`offer ${token} in the ${ROW_NAMES[r]} tier`}
+                        onClick={() => onOffer(r, t, true)}>+</button>
+                    </td>
+                  )
+                }
+                return (
+                  <td key={r} style={{ whiteSpace: 'nowrap' }}>
+                    <AmountInput token={token} units={units} onChange={u => onAmount(r, t, u)} />
+                    <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 4 }}>{times(token, units)}</span>
+                    {!isNice(units, token) && (
+                      <button
+                        className="chip warn"
+                        title={`Nearest printable prize is ${fmt(whole(token, nice(units, token)), 4)}`}
+                        onClick={() => onAmount(r, t, nice(units, token))}
+                      >
+                        not round
+                      </button>
+                    )}
+                    <button className="mini" title={`stop offering ${token} in the ${ROW_NAMES[r]} tier`}
+                      onClick={() => onOffer(r, t, false)}>−</button>
+                  </td>
+                )
+              })}
+              <td>{pct(perCoin.get(t) ?? 0, 2)}</td>
+              <td>
+                <button className="mini" title="remove coin"
+                  disabled={card.tokens.length <= 1}
+                  onClick={() => onRemoveToken(t)}>×</button>
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={2} style={{ color: 'var(--muted)' }}>tier RTP</td>
+            {card.prizes.map((_, r) => <td key={r}>{pct(perTier.get(r) ?? 0, 2)}</td>)}
+            <td colSpan={2} />
+          </tr>
         </tbody>
       </table>
 
-      {card.pool.length < MAX_POOL && spare.length > 0 && (
+      {card.tokens.length < MAX_TOKENS && spare.length > 0 && (
         <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
           <select defaultValue="" onChange={e => { if (e.target.value) onAddToken(e.target.value) }}>
-            <option value="">+ token…</option>
+            <option value="">+ coin…</option>
             {spare.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-            added at weight 0, so the sum stays exact until you give it one
+            offered in low, mid and high at each tier's value
           </span>
         </div>
       )}
-      {card.pool.length >= MAX_POOL && (
-        <div className="note">Pool is full — {MAX_POOL} is the on-chain cap.</div>
+      {card.tokens.length >= MAX_TOKENS && (
+        <div className="note">Every coin slot is used — {MAX_TOKENS} is the on-chain cap.</div>
       )}
     </div>
   )

@@ -10,37 +10,16 @@
 use scratch_engine::*;
 use serde_json::Value;
 
-/// The coins a card pays in, and the prize rows, from the sheet. A sheet still in the pre-tier
-/// shape (one `pool` of token/amount/weight) is read as four rows over its coins — low, mid and
-/// high offering every coin, top only SOL — so the render guarantees hold for either shape.
+/// The coins a card pays in, and the prize rows, from the sheet.
 fn prizes(c: &Value, card: &mut CardConfig) -> Vec<String> {
-    if let Some(rows) = c["prizes"].as_array() {
-        let tokens: Vec<String> = c["tokens"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect();
-        card.token_len = tokens.len() as u8;
-        for (r, row) in rows.iter().enumerate() {
-            card.rows[r].weight = row["weight"].as_u64().unwrap() as u32;
-            for (t, a) in row["amounts"].as_array().unwrap().iter().enumerate() {
-                card.rows[r].amounts[t] = a.as_u64().unwrap();
-            }
-        }
-        return tokens;
-    }
-    let pool = c["pool"].as_array().unwrap();
-    let tokens: Vec<String> = pool.iter().map(|e| e["token"].as_str().unwrap().to_string()).collect();
+    let tokens: Vec<String> = c["tokens"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect();
     card.token_len = tokens.len() as u8;
-    let sol = tokens.iter().position(|t| t == "SOL").unwrap_or(0);
-    let shares = [0.70, 0.20, 0.09];
-    let mut left = TOTAL;
-    for r in 0..3 {
-        let w = (TOTAL as f64 * shares[r]) as u64;
-        card.rows[r].weight = w as u32;
-        left -= w;
-        for (t, e) in pool.iter().enumerate() {
-            card.rows[r].amounts[t] = e["amount"].as_u64().unwrap() * (1 << (3 * r));
+    for (r, row) in c["prizes"].as_array().unwrap().iter().enumerate() {
+        card.rows[r].weight = row["weight"].as_u64().unwrap() as u32;
+        for (t, a) in row["amounts"].as_array().unwrap().iter().enumerate() {
+            card.rows[r].amounts[t] = a.as_u64().unwrap();
         }
     }
-    card.rows[3].weight = left as u32;
-    card.rows[3].amounts[sol] = pool[sol]["amount"].as_u64().unwrap() * 1000;
     tokens
 }
 

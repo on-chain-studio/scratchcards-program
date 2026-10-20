@@ -1,20 +1,19 @@
 import {
-  Card, Block, Pay, PoolEntry,
+  Card, Block, Pay, PrizeRow,
   DISTINCT, MULT_OK, MARKED, LINEAR, w, normalize, maskOf,
 } from './types'
 
-const LOW = 26, MID = 12, HIGH = 4
-
-const REL: Record<string, number> = {
-  BONK: LOW, PENGU: LOW, WEN: LOW, MEW: LOW,
-  WIF: MID, PUMP: MID, SKR: MID, POPCAT: MID, JTO: MID,
-  FART: HIGH, PYTH: HIGH, RAY: HIGH, JUP: HIGH, SOL: HIGH,
-}
-
-function pool(amounts: Record<string, number>): PoolEntry[] {
-  const tokens = Object.keys(amounts)
-  const weights = normalize(tokens.map(t => REL[t] ?? 1))
-  return tokens.map((token, i) => ({ token, weight: weights[i], amount: amounts[token] }))
+/**
+ * A starting point for the tiers, which the solver then re-fits: every coin in low, mid and high at
+ * x1, x8 and x64 of the given amount, SOL alone in top at x1000.
+ */
+function prizes(amounts: Record<string, number>): Pick<Card, 'tokens' | 'prizes'> {
+  const tokens = [...new Set([...Object.keys(amounts), 'SOL'])]
+  const base = tokens.map(t => amounts[t] ?? 1_000_000)
+  const weights = normalize([70, 20, 9, 1])
+  const rows: PrizeRow[] = [1, 8, 64].map((f, r) => ({ weight: weights[r], amounts: base.map(a => a * f) }))
+  rows.push({ weight: weights[3], amounts: tokens.map((t, i) => (t === 'SOL' ? base[i] * 1000 : 0)) })
+  return { tokens, prizes: rows }
 }
 
 const jack = (): Block => ({ role: 'jackpot', count: 4, cols: 4, flags: 0, a: 7, b: 9 })
@@ -47,7 +46,7 @@ export const CARDS: Card[] = [
     ],
     pays: [line([0, 1, 2], 1, 0.28)],
     tiers: [],
-    pool: pool({ BONK: 8000000000, PENGU: 100000000, MEW: 60000000, WIF: 10000000 }),
+    ...prizes({ BONK: 8000000000, PENGU: 100000000, MEW: 60000000, WIF: 10000000 }),
   },
 
   {
@@ -69,7 +68,7 @@ export const CARDS: Card[] = [
       { scope: span(0, 9), weight: w(0.000005), min: 9, flags: 0, mult: 64 },
     ],
     tiers: [],
-    pool: pool({ BONK: 2000000000, PENGU: 15000000, MEW: 40000000, WIF: 1000000 }),
+    ...prizes({ BONK: 2000000000, PENGU: 15000000, MEW: 40000000, WIF: 1000000 }),
   },
 
   {
@@ -88,7 +87,7 @@ export const CARDS: Card[] = [
       scope: maskOf([i, 5 + i, 10 + i]), weight: w(0.35), min: 1, flags: 0, mult: 1,
     })),
     tiers: [],
-    pool: pool({
+    ...prizes({
       BONK: 2500000000, PENGU: 60000000, MEW: 50000000,
       WIF: 5000000, PUMP: 1000000000, SKR: 400000000, POPCAT: 30000000000,
     }),
@@ -109,7 +108,7 @@ export const CARDS: Card[] = [
         scope: span(2, 9), weight: w(p), min: i + 1, flags: MARKED | LINEAR, mult: 1,
       })),
     tiers: [],
-    pool: pool({
+    ...prizes({
       MEW: 8000000, WIF: 1000000, PUMP: 100000000, SKR: 30000000, POPCAT: 5000000000,
       JTO: 2000000000, FART: 4000000, PYTH: 40000000, RAY: 6000000, SOL: 300000000,
     }),
@@ -134,7 +133,7 @@ export const CARDS: Card[] = [
       line([2, 4, 6], 5, 0.0125),  // Diagonal
     ],
     tiers: [],
-    pool: pool({
+    ...prizes({
       SKR: 300000000, POPCAT: 20000000000, JTO: 3000000000, FART: 30000000,
       PYTH: 100000000, RAY: 20000000, JUP: 300000000, SOL: 1000000000,
     }),

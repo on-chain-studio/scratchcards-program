@@ -1,6 +1,6 @@
 import {
-  Card, TOTAL, MAX_POOL, MAX_BLOCKS, MAX_PAYS, MAX_TIERS, MAX_CELLS,
-  CELL_PAYLOAD_MAX, MARKED, popcount, cellsOf, bodyLen, cellCount, disjoint,
+  Card, TOTAL, MAX_TOKENS, PRIZE_ROWS, ROW_NAMES, MAX_BLOCKS, MAX_PAYS, MAX_TIERS, MAX_CELLS,
+  CELL_PAYLOAD_MAX, MARKED, offered, popcount, cellsOf, bodyLen, cellCount, disjoint,
   jackpotHitFor, JACKPOT_SHARE,
 } from './types'
 
@@ -21,7 +21,7 @@ export function validate(card: Card): Check[] {
   const add = (ok: boolean, label: string, detail: string) => out.push({ ok, label, detail })
 
   const paySum = card.pays.reduce((n, p) => n + p.weight, 0)
-  const poolSum = card.pool.reduce((n, p) => n + p.weight, 0)
+  const rowSum = card.prizes.reduce((n, r) => n + r.weight, 0)
   const tierSum = card.tiers.reduce((n, t) => n + t.weight, 0)
   const body = bodyLen(card)
 
@@ -41,8 +41,8 @@ export function validate(card: Card): Check[] {
          : 'overlapping scopes cannot roll independently and stay exact')
   }
 
-  add(poolSum === TOTAL, 'Σ pool weight = 2³²',
-    poolSum === TOTAL ? 'exact' : `${poolSum.toLocaleString()}, off by ${(poolSum - TOTAL).toLocaleString()}`)
+  add(rowSum === TOTAL, 'Σ prize tier weight = 2³²',
+    rowSum === TOTAL ? 'exact' : `${rowSum.toLocaleString()}, off by ${(rowSum - TOTAL).toLocaleString()}`)
 
   const wantHit = jackpotHitFor(card.priceLamports)
   const perSol = (card.jackpotHitWeight / TOTAL) / (card.priceLamports / 1e9)
@@ -59,8 +59,21 @@ export function validate(card: Card): Check[] {
   add(tierSum <= TOTAL, 'Σ tier weight ≤ 2³²',
     card.tiers.length ? `${((tierSum / TOTAL) * 100).toFixed(2)}% carry a multiplier` : 'no multiplier tiers')
 
-  add(card.pool.length >= 1 && card.pool.length <= MAX_POOL,
-    `pool ≤ ${MAX_POOL}`, `${card.pool.length} tokens`)
+  add(card.tokens.length >= 1 && card.tokens.length <= MAX_TOKENS,
+    `coins ≤ ${MAX_TOKENS}`, `${card.tokens.length} coins`)
+  const twice = card.tokens.filter((t, i) => card.tokens.indexOf(t) !== i)
+  add(twice.length === 0, 'each coin listed once',
+    twice.length ? `${twice.join(', ')} twice — the client shows a coin by its mint` : 'distinct')
+  add(card.prizes.length === PRIZE_ROWS && card.prizes.every(r => r.amounts.length === card.tokens.length),
+    `${PRIZE_ROWS} prize tiers, one amount per coin`, `${card.prizes.length} tiers`)
+  const empty = card.prizes.map((r, i) => (r.weight > 0 && !offered(r).length ? ROW_NAMES[i] : '')).filter(Boolean)
+  add(empty.length === 0, 'every drawable tier offers a coin',
+    empty.length ? `${empty.join(', ')} can be drawn with nothing to pay` : 'ok')
+  // House policy, not a program rule: the top tier is the SOL headline.
+  const top = card.prizes[PRIZE_ROWS - 1]
+  const topCoins = top ? offered(top).map(t => card.tokens[t]) : []
+  add(topCoins.length === 1 && topCoins[0] === 'SOL', 'top tier pays SOL alone',
+    topCoins.length ? topCoins.join(', ') : 'offers nothing')
   add(card.blocks.length >= 1 && card.blocks.length <= MAX_BLOCKS,
     `blocks ≤ ${MAX_BLOCKS}`, `${card.blocks.length} blocks`)
   add(card.pays.length >= 1 && card.pays.length <= MAX_PAYS,
@@ -87,8 +100,6 @@ export function validate(card: Card): Check[] {
   add(badRange.length === 0, 'number ranges fit 12 bits',
     badRange.length ? `${badRange.length} bad ranges` : 'ok')
 
-  add(poolSum > 0 && card.pool.some(p => p.weight > 0), 'pool has a drawable token',
-    card.pool.filter(p => p.weight > 0).length + ' with weight')
 
   const needsMark = card.pays.some(p => p.flags & MARKED)
   const hasMark = card.blocks.some(b => b.role === 'mark')

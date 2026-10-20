@@ -1,5 +1,5 @@
 import {
-  Card, TOTAL, LINEAR, JACKPOT_SHARE, whole, duelsOf,
+  Card, TOTAL, LINEAR, JACKPOT_SHARE, ROW_NAMES, whole, duelsOf, offered,
 } from './types'
 import { scopeName } from './cards'
 
@@ -8,7 +8,9 @@ export type Prices = Record<string, number>
 export interface LadderRow {
   key: string
   payIndex: number
-  poolIndex: number
+  /** prize tier, low to top */
+  rowIndex: number
+  tokenIndex: number
   tierIndex: number
   label: string
   token: string
@@ -44,7 +46,7 @@ export interface Prize {
 
 /**
  * The ladder as a player would read it: one row per distinct prize, not one per
- * (outcome × token × multiplier). Several outcomes can pay the same amount — a ×2 line on a
+ * (outcome × tier × coin × multiplier). Several outcomes can pay the same amount — a ×2 line on a
  * small token and a ×1 line on a bigger one — and the player only sees the amount.
  */
 export function prizeList(rows: LadderRow[]): Prize[] {
@@ -72,7 +74,7 @@ export interface Summary {
   priceUsd: number
   duels: number
   paySum: number
-  poolSum: number
+  rowSum: number
   tierSum: number
   multRate: number
   winRate: number
@@ -108,7 +110,7 @@ export function analyse(card: Card, prices: Prices): Summary {
   const priceUsd = priceSol * sol
 
   const paySum = card.pays.reduce((n, p) => n + p.weight, 0)
-  const poolSum = card.pool.reduce((n, p) => n + p.weight, 0)
+  const rowSum = card.prizes.reduce((n, r) => n + r.weight, 0)
   const tierSum = card.tiers.reduce((n, t) => n + t.weight, 0)
 
   const duels = duelsOf(card)
@@ -132,27 +134,33 @@ export function analyse(card: Card, prices: Prices): Summary {
     if (pPay <= 0) return
     const scale = pay.mult * ((pay.flags & LINEAR) ? pay.min : 1)
 
-    card.pool.forEach((entry, poolIndex) => {
-      const pToken = entry.weight / poolSum
-      if (pToken <= 0) return
-      const price = prices[entry.token]
-      if (price === undefined) missing.add(entry.token)
+    card.prizes.forEach((row, rowIndex) => {
+      const coins = offered(row)
+      const pRow = row.weight / TOTAL
+      if (pRow <= 0 || !coins.length) return
+      coins.forEach(tokenIndex => {
+        const token = card.tokens[tokenIndex]
+        // the coin is drawn uniformly among the ones the tier offers
+        const pToken = pRow / coins.length
+        const price = prices[token]
+        if (price === undefined) missing.add(token)
 
-      tierOptions.forEach(tier => {
-        if (tier.p <= 0) return
-        const units = entry.amount * scale * tier.factor
-        const amount = whole(entry.token, units)
-        const usd = amount * (price ?? 0)
-        const p = pPay * pToken * tier.p
-        rows.push({
-          key: `${payIndex}:${poolIndex}:${tier.index}`,
-          payIndex, poolIndex, tierIndex: tier.index,
-          label: scopeName(card, pay),
-          token: entry.token,
-          units, amount, usd,
-          multiple: priceUsd > 0 ? usd / priceUsd : 0,
-          p,
-          rtp: priceUsd > 0 ? (p * usd) / priceUsd : 0,
+        tierOptions.forEach(tier => {
+          if (tier.p <= 0) return
+          const units = row.amounts[tokenIndex] * scale * tier.factor
+          const amount = whole(token, units)
+          const usd = amount * (price ?? 0)
+          const p = pPay * pToken * tier.p
+          rows.push({
+            key: `${payIndex}:${rowIndex}:${tokenIndex}:${tier.index}`,
+            payIndex, rowIndex, tokenIndex, tierIndex: tier.index,
+            label: `${scopeName(card, pay)} · ${ROW_NAMES[rowIndex]}`,
+            token,
+            units, amount, usd,
+            multiple: priceUsd > 0 ? usd / priceUsd : 0,
+            p,
+            rtp: priceUsd > 0 ? (p * usd) / priceUsd : 0,
+          })
         })
       })
     })
@@ -175,7 +183,7 @@ export function analyse(card: Card, prices: Prices): Summary {
 
   return {
     priceSol, priceUsd, duels,
-    paySum, poolSum, tierSum,
+    paySum, rowSum, tierSum,
     multRate: tierSum / TOTAL,
     winRate, expectedWins,
     tokenRtp,

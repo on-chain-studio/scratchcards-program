@@ -2,7 +2,9 @@ import rawPrices from '@prices'
 
 export const TOTAL = 2 ** 32
 
-export const MAX_POOL = 10
+export const MAX_TOKENS = 12
+export const PRIZE_ROWS = 4
+export const ROW_NAMES = ['low', 'mid', 'high', 'top'] as const
 export const MAX_BLOCKS = 8
 export const MAX_PAYS = 32
 export const MAX_TIERS = 4
@@ -70,10 +72,13 @@ export interface Tier {
   weight: number
 }
 
-export interface PoolEntry {
-  token: string
+/**
+ * One prize tier. A win lands in a tier by `weight`, then pays one of the coins the tier offers,
+ * drawn uniformly — `amounts` is per coin in the card's `tokens` order, base units, 0 = not offered.
+ */
+export interface PrizeRow {
   weight: number
-  amount: number
+  amounts: number[]
 }
 
 /**
@@ -111,7 +116,10 @@ export interface Card {
   blocks: Block[]
   pays: Pay[]
   tiers: Tier[]
-  pool: PoolEntry[]
+  /** the coins this card can pay, by symbol; SOL is the native coin */
+  tokens: string[]
+  /** low, mid, high, top */
+  prizes: PrizeRow[]
 }
 
 /**
@@ -133,6 +141,19 @@ export const FALLBACK_DECIMALS = 6
 export const decimalsOf = (token: string) => DECIMALS[token] ?? FALLBACK_DECIMALS
 export const knownDecimals = (token: string) => typeof DECIMALS[token] === 'number'
 export const whole = (token: string, units: number) => units / 10 ** decimalsOf(token)
+
+/** The coins a row offers — a win in it pays one of these, each equally likely. */
+export const offered = (row: PrizeRow) =>
+  row.amounts.map((a, t) => (a > 0 ? t : -1)).filter(t => t >= 0)
+
+/**
+ * What a row pays on average in USD, given its amounts. The coin draw inside a row is uniform, so
+ * this is a plain mean over the coins it offers.
+ */
+export function rowUsd(tokens: string[], amounts: number[], prices: Record<string, number>): number {
+  const paid = amounts.map((a, t) => (a > 0 ? whole(tokens[t], a) * (prices[tokens[t]] ?? 0) : -1)).filter(v => v >= 0)
+  return paid.length ? paid.reduce((n, v) => n + v, 0) / paid.length : 0
+}
 
 export const popcount = (n: number) => {
   let c = 0

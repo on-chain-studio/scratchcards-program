@@ -303,29 +303,13 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    /// The coin count and prize tiers. Until the sheet is re-tuned for tiers, the old pool stands in:
-    /// every coin in low/mid/high at x1/x8/x64, SOL alone in top at x1000.
+    /// The coin count and the prize tiers.
     fn prizes(c: &Value) -> (usize, Vec<InitPrizeRow>) {
-        if let Some(rows) = c["prizes"].as_array() {
-            let rows = rows.iter().map(|r| InitPrizeRow {
-                weight: r["weight"].as_u64().unwrap() as u32,
-                amounts: r["amounts"].as_array().unwrap().iter().map(|a| a.as_u64().unwrap()).collect(),
-            }).collect();
-            return (c["tokens"].as_array().unwrap().len(), rows);
-        }
-        let pool: Vec<u64> = c["pool"].as_array().unwrap().iter().map(|e| e["amount"].as_u64().unwrap()).collect();
-        let shares = [0.70, 0.20, 0.09];
-        let mut left = WEIGHT_TOTAL;
-        let mut rows: Vec<InitPrizeRow> = (0..3).map(|r| {
-            let w = (WEIGHT_TOTAL as f64 * shares[r]) as u64;
-            left -= w;
-            InitPrizeRow { weight: w as u32, amounts: pool.iter().map(|a| a * (1 << (3 * r))).collect() }
+        let rows = c["prizes"].as_array().unwrap().iter().map(|r| InitPrizeRow {
+            weight: r["weight"].as_u64().unwrap() as u32,
+            amounts: r["amounts"].as_array().unwrap().iter().map(|a| a.as_u64().unwrap()).collect(),
         }).collect();
-        let sol = c["pool"].as_array().unwrap().iter().position(|e| e["token"] == "SOL").unwrap_or(0);
-        let mut top = vec![0; pool.len()];
-        top[sol] = pool[sol] * 1000;
-        rows.push(InitPrizeRow { weight: left as u32, amounts: top });
-        (pool.len(), rows)
+        (c["tokens"].as_array().unwrap().len(), rows)
     }
 
     /// The sheet the balancing tool writes must be one this instruction accepts.

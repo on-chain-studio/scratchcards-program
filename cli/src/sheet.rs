@@ -60,13 +60,6 @@ pub struct Tier {
     pub weight: u32,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct PoolEntry {
-    pub token: String,
-    pub weight: u32,
-    pub amount: u64,
-}
-
 /// One prize tier: its draw weight and each coin's amount there, in `tokens` order; zero = not offered.
 #[derive(Deserialize, Debug, Clone)]
 pub struct PrizeRow {
@@ -88,24 +81,14 @@ pub struct Card {
     pub blocks: Vec<Block>,
     pub pays: Vec<Pay>,
     pub tiers: Vec<Tier>,
-    #[serde(default)]
     pub tokens: Vec<String>,
     /// low, mid, high, top
-    #[serde(default)]
     pub prizes: Vec<PrizeRow>,
-    #[serde(default)]
-    pub pool: Vec<PoolEntry>,
 }
 
 pub fn load(path: &Path) -> Result<Vec<Card>> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let mut cards: Vec<Card> = serde_json::from_str(&text).with_context(|| format!("{} is not a card sheet", path.display()))?;
-    for card in &mut cards {
-        if card.prizes.is_empty() {
-            card.tiers_from_pool()?;
-        }
-    }
-    Ok(cards)
+    serde_json::from_str(&text).with_context(|| format!("{} is not a card sheet", path.display()))
 }
 
 /// Card kinds, in the order the apps' copy table lists them; a card's `kind` byte is its position + 1.
@@ -230,27 +213,6 @@ fn role(name: &str) -> Result<u8> {
 }
 
 impl Card {
-    /// Stand-in tiers for a sheet still in the old pool shape, until it is re-tuned for tiers:
-    /// every coin in low/mid/high at x1/x8/x64 of its pool amount, SOL alone in top at x1000.
-    fn tiers_from_pool(&mut self) -> Result<()> {
-        let Some(sol) = self.pool.iter().position(|e| e.token == "SOL") else {
-            bail!("{}: no SOL in the pool to carry the top tier", self.id);
-        };
-        self.tokens = self.pool.iter().map(|e| e.token.clone()).collect();
-        let shares = [0.70, 0.20, 0.09];
-        let mut left = WEIGHT_TOTAL;
-        for (r, share) in shares.iter().enumerate() {
-            let weight = (WEIGHT_TOTAL as f64 * share) as u64;
-            left -= weight;
-            let amounts = self.pool.iter().map(|e| e.amount << (3 * r)).collect();
-            self.prizes.push(PrizeRow { weight: weight as u32, amounts });
-        }
-        let mut top = vec![0; self.pool.len()];
-        top[sol] = self.pool[sol].amount * 1000;
-        self.prizes.push(PrizeRow { weight: left as u32, amounts: top });
-        Ok(())
-    }
-
     /// The program's `SetCard` for publishing this card at `index` on this cluster.
     pub fn set_card(&self, index: u8, mints: &Mints, mainnet: bool) -> Result<SetCard> {
         let rows = prize_rows(self, mainnet)?;
