@@ -9,6 +9,43 @@ use scratch_cards::state::config::*;
 use scratch_cards::utils::engine;
 use serde_json::Value;
 
+/// Coins and prize tiers; SOL gets the all-zero mint, as on chain. Until the sheet is re-tuned for
+/// tiers, the old pool stands in: every coin in low/mid/high at x1/x8/x64, SOL alone in top at x1000.
+fn prizes(c: &Value, card: &mut CardConfig) {
+    let names = |v: &Value| -> Vec<String> { v.as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect() };
+    let tokens = match c["tokens"].as_array() {
+        Some(_) => names(&c["tokens"]),
+        None => c["pool"].as_array().unwrap().iter().map(|e| e["token"].as_str().unwrap().to_string()).collect(),
+    };
+    card.token_len = tokens.len() as u8;
+    for (i, t) in tokens.iter().enumerate() {
+        card.tokens[i] = if t == "SOL" { [0; 32] } else { [i as u8 + 1; 32] };
+    }
+    if let Some(rows) = c["prizes"].as_array() {
+        for (r, row) in rows.iter().enumerate() {
+            card.rows[r].weight = row["weight"].as_u64().unwrap() as u32;
+            for (t, a) in row["amounts"].as_array().unwrap().iter().enumerate() {
+                card.rows[r].amounts[t] = a.as_u64().unwrap();
+            }
+        }
+        return;
+    }
+    let pool = c["pool"].as_array().unwrap();
+    let sol = tokens.iter().position(|t| t == "SOL").unwrap_or(0);
+    let shares = [0.70, 0.20, 0.09];
+    let mut left = WEIGHT_TOTAL;
+    for r in 0..3 {
+        let w = (WEIGHT_TOTAL as f64 * shares[r]) as u64;
+        card.rows[r].weight = w as u32;
+        left -= w;
+        for (t, e) in pool.iter().enumerate() {
+            card.rows[r].amounts[t] = e["amount"].as_u64().unwrap() * (1 << (3 * r));
+        }
+    }
+    card.rows[3].weight = left as u32;
+    card.rows[3].amounts[sol] = pool[sol]["amount"].as_u64().unwrap() * 1000;
+}
+
 fn sheet() -> Vec<(String, CardConfig)> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tools/sheet/cards.json");
     let raw: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
@@ -58,15 +95,7 @@ fn sheet() -> Vec<(String, CardConfig)> {
                 };
                 card.tier_len = i as u8 + 1;
             }
-            for (i, e) in c["pool"].as_array().unwrap().iter().enumerate() {
-                card.pool[i] = PoolEntry {
-                    mint: [i as u8 + 1; 32],
-                    amount: e["amount"].as_u64().unwrap(),
-                    weight: e["weight"].as_u64().unwrap() as u32,
-                    _pad: 0,
-                };
-                card.pool_len = i as u8 + 1;
-            }
+            prizes(c, &mut card);
             (c["id"].as_str().unwrap().to_string(), card)
         })
         .collect()

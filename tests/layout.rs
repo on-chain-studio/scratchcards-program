@@ -2,8 +2,8 @@
 fn layout_matches_the_deployed_account() {
     use scratch_cards::state::config::{Config, CARD_SIZE, INITIAL_CARDS};
     assert_eq!(Config::HEADER, 56, "header moved — every card offset shifts");
-    assert_eq!(CARD_SIZE, 992, "card stride moved — every card offset shifts");
-    assert_eq!(Config::size_for(INITIAL_CARDS), 7992, "shelf size moved");
+    assert_eq!(CARD_SIZE, 1312, "card stride moved — every card offset shifts");
+    assert_eq!(Config::size_for(INITIAL_CARDS), 10552, "shelf size moved");
     // The alignment invariant the casts depend on.
     assert_eq!(Config::HEADER % 8, 0);
     assert_eq!(CARD_SIZE % 8, 0);

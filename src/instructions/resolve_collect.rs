@@ -57,7 +57,7 @@ impl ResolveCollect {
             let wins = engine::evaluate(terms, &seed)?;
             for (i, amount) in wins.amounts.iter().enumerate() {
                 if *amount > 0 {
-                    casino_core::analytics::record_payout(&mut a.payouts, &terms.pool[i].mint, *amount);
+                    casino_core::analytics::record_payout(&mut a.payouts, &terms.tokens[i], *amount);
                 }
             }
         }

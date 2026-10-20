@@ -17,7 +17,7 @@ fn shared(card: &CardConfig) -> scratch_engine::CardConfig {
         block_len: card.block_len,
         pay_len: card.pay_len,
         tier_len: card.tier_len,
-        pool_len: card.pool_len,
+        token_len: card.token_len,
         ..Default::default()
     };
     for (dst, src) in out.blocks.iter_mut().zip(card.blocks.iter()) {
@@ -42,14 +42,11 @@ fn shared(card: &CardConfig) -> scratch_engine::CardConfig {
     for (dst, src) in out.tiers.iter_mut().zip(card.tiers.iter()) {
         *dst = scratch_engine::Tier { factor: src.factor, weight: src.weight };
     }
-    for (dst, src) in out.pool.iter_mut().zip(card.pool.iter()) {
-        *dst = scratch_engine::PoolEntry { weight: src.weight, amount: src.amount };
+    for (dst, src) in out.rows.iter_mut().zip(card.rows.iter()) {
+        *dst = scratch_engine::PrizeRow { weight: src.weight, amounts: src.amounts };
     }
-    for (i, src) in card.pool().iter().enumerate() {
-        if src.mint == [0u8; 32] {
-            out.sol_index = i as u16;
-            break;
-        }
+    if let Some(i) = card.tokens().iter().position(|m| *m == [0u8; 32]) {
+        out.sol_index = i as u16;
     }
     out
 }

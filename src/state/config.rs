@@ -2,16 +2,18 @@ use bytemuck::{Pod, Zeroable};
 use casino_core::shelf::Shelf;
 
 pub const DISCRIMINATOR: u64 = 1;
-pub const VERSION:       u64 = 2;
+pub const VERSION:       u64 = 3;
 
 /// Starting shelf size, not a ceiling — `GrowConfig` buys more room.
 pub const INITIAL_CARDS: usize = 8;
 
 /// Fixed bounds inside a card; every engine loop is bounded by one of these.
-pub const MAX_POOL:   usize = 10;
+pub const MAX_TOKENS: usize = 12;
 pub const MAX_BLOCKS: usize = 8;
 pub const MAX_PAYS:   usize = 32;
 pub const MAX_TIERS:  usize = 4;
+/// Prize tiers, low to top.
+pub const PRIZE_ROWS: usize = 4;
 
 /// Width of the `u32` scope bitmask — cells can't exceed this.
 pub const MAX_CELLS: usize = 32;
@@ -75,17 +77,17 @@ pub struct Tier {
     pub weight: u32,
 }
 
-/// One token in a card's pool: the mint, its printed amount in base units, and its draw weight.
+/// One prize tier: how often a win lands in it, and what each coin pays there in base units.
+/// A zero amount means the coin isn't offered in this tier.
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy)]
-pub struct PoolEntry {
-    pub mint:   [u8; 32],
-    pub amount: u64,
-    pub weight: u32,
-    pub _pad:   u32,
+pub struct PrizeRow {
+    pub weight:  u32,
+    pub _pad:    u32,
+    pub amounts: [u64; MAX_TOKENS],
 }
 
-/// One card on the shelf: its layout, its pay table, its pool, and every weight the deal draws
+/// One card on the shelf: its layout, its pay table, its coins and prize tiers, and every weight the deal draws
 /// against. The published odds sheet, on-chain.
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy)]
@@ -99,14 +101,16 @@ pub struct CardConfig {
     pub block_len: u8,
     pub pay_len:   u8,
     pub tier_len:  u8,
-    pub pool_len:  u8,
+    pub token_len: u8,
     pub _pad:      [u8; 2],
     /// Compare: house block, mine block, prize block, strict.
     pub mode_args: [u16; 4],
     pub blocks: [Block; MAX_BLOCKS],
     pub pays:   [Pay; MAX_PAYS],
     pub tiers:  [Tier; MAX_TIERS],
-    pub pool:   [PoolEntry; MAX_POOL],
+    /// Coin mints; all-zero is SOL.
+    pub tokens: [[u8; 32]; MAX_TOKENS],
+    pub rows:   [PrizeRow; PRIZE_ROWS],
 }
 
 /// `["config"]` — the shelf: a `casino_core::shelf::Header`, then the CardConfigs it publishes packed
@@ -122,8 +126,8 @@ const _: () = assert!(CARD_SIZE % 8 == 0);
 const _: () = assert!(size_of::<Block>() == 8);
 const _: () = assert!(size_of::<Pay>() == 12);
 const _: () = assert!(size_of::<Tier>() == 8);
-const _: () = assert!(size_of::<PoolEntry>() == 48);
-const _: () = assert!(CARD_SIZE == 992);
+const _: () = assert!(size_of::<PrizeRow>() == 104);
+const _: () = assert!(CARD_SIZE == 1312);
 
 impl CardConfig {
     pub fn blocks(&self) -> &[Block] {
@@ -135,8 +139,8 @@ impl CardConfig {
     pub fn tiers(&self) -> &[Tier] {
         &self.tiers[..(self.tier_len as usize).min(MAX_TIERS)]
     }
-    pub fn pool(&self) -> &[PoolEntry] {
-        &self.pool[..(self.pool_len as usize).min(MAX_POOL)]
+    pub fn tokens(&self) -> &[[u8; 32]] {
+        &self.tokens[..(self.token_len as usize).min(MAX_TOKENS)]
     }
 
     /// Cells before the jackpot line — everything a pay entry may look at.

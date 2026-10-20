@@ -74,7 +74,7 @@ impl RequestCollect {
             for (i, amount) in wins.amounts.iter().enumerate() {
                 if *amount == 0 { continue; }
                 movements.push(receipt::Movement {
-                    mint: Pubkey::new_from_array(c.pool[i].mint),
+                    mint: Pubkey::new_from_array(c.tokens[i]),
                     amount: *amount,
                     from: 1,
                     to: 0,

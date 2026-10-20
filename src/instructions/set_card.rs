@@ -32,14 +32,14 @@ pub struct InitTier {
     pub weight: u32,
 }
 
+/// One prize tier: its draw weight and each coin's amount there, in token order; zero = not offered.
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct InitPoolEntry {
-    pub mint:   [u8; 32],
-    pub amount: u64,
-    pub weight: u32,
+pub struct InitPrizeRow {
+    pub weight:  u32,
+    pub amounts: Vec<u64>,
 }
 
-/// Writes one card of the public sheet: its layout, its pay table, its pool and every weight the
+/// Writes one card of the public sheet: its layout, its pay table, its coins and prize tiers and every weight the
 /// deal draws against. Admin only. One card per transaction — the whole shelf doesn't fit in one.
 /// Accounts: [initializer, config, system_program]
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -54,7 +54,8 @@ pub struct SetCard {
     pub blocks: Vec<InitBlock>,
     pub pays:   Vec<InitPay>,
     pub tiers:  Vec<InitTier>,
-    pub pool:   Vec<InitPoolEntry>,
+    pub tokens: Vec<[u8; 32]>,
+    pub prizes: Vec<InitPrizeRow>,
 }
 
 const BAD: ProgramError = ProgramError::InvalidInstructionData;
@@ -74,7 +75,8 @@ impl SetCard {
         need(!self.blocks.is_empty() && self.blocks.len() <= MAX_BLOCKS)?;
         need(!self.pays.is_empty() && self.pays.len() <= MAX_PAYS)?;
         need(self.tiers.len() <= MAX_TIERS)?;
-        need(!self.pool.is_empty() && self.pool.len() <= MAX_POOL)?;
+        need(!self.tokens.is_empty() && self.tokens.len() <= MAX_TOKENS)?;
+        need(self.prizes.len() == PRIZE_ROWS)?;
 
         let cells: usize = self.blocks.iter().map(|b| b.count as usize).sum();
         need(cells > 0 && cells <= MAX_CELLS)?;
@@ -98,15 +100,15 @@ impl SetCard {
         need(body > 0)?;
         let body_mask: u32 = if body >= 32 { u32::MAX } else { (1u32 << body) - 1 };
 
-        // ── pool: an exact partition, so `pick` can walk it without a modulo and never miss
-        let pool_total: u64 = self.pool.iter().map(|e| e.weight as u64).sum();
-        need(pool_total == WEIGHT_TOTAL)?;
-        need(self.pool.iter().any(|e| e.weight > 0))?;
-        need(self.pool.iter().all(|e| e.amount > 0))?;
-        need(self.pool.len() <= CELL_PAYLOAD_MAX as usize)?;
-        // Distinct mints: the client shows a token by its mint, so duplicates are indistinguishable.
-        for (i, e) in self.pool.iter().enumerate() {
-            need(!self.pool[..i].iter().any(|p| p.mint == e.mint))?;
+        // ── prize tiers: an exact partition, so `pick` can walk it without a modulo and never miss
+        let row_total: u64 = self.prizes.iter().map(|r| r.weight as u64).sum();
+        need(row_total == WEIGHT_TOTAL)?;
+        need(self.prizes.iter().all(|r| r.amounts.len() == self.tokens.len()))?;
+        // A tier that can be drawn must have a coin to pay, or the win has nothing to show.
+        need(self.prizes.iter().all(|r| r.weight == 0 || r.amounts.iter().any(|&a| a > 0)))?;
+        // Distinct mints: the client shows a coin by its mint, so duplicates are indistinguishable.
+        for (i, m) in self.tokens.iter().enumerate() {
+            need(!self.tokens[..i].contains(m))?;
         }
 
         // ── tiers: the shortfall is "no multiplier", so this only has to fit
@@ -197,13 +199,18 @@ impl SetCard {
                     None => marks,
                 };
             }
-            need(blocked < self.pool.len())?;
+            need(blocked < self.symbols())?;
         }
         Ok(())
     }
 }
 
 impl SetCard {
+    /// Distinct plates the fill can place: every offered tier + coin pair.
+    fn symbols(&self) -> usize {
+        self.prizes.iter().flat_map(|r| r.amounts.iter()).filter(|&&a| a > 0).count()
+    }
+
     #[inline(always)]
     pub fn process<'a>(
         &self,
@@ -249,13 +256,14 @@ impl SetCard {
             block_len: self.blocks.len() as u8,
             pay_len: self.pays.len() as u8,
             tier_len: self.tiers.len() as u8,
-            pool_len: self.pool.len() as u8,
+            token_len: self.tokens.len() as u8,
             _pad: [0; 2],
             mode_args: self.mode_args,
             blocks: [Block::zeroed(); MAX_BLOCKS],
             pays: [Pay::zeroed(); MAX_PAYS],
             tiers: [Tier::zeroed(); MAX_TIERS],
-            pool: [PoolEntry::zeroed(); MAX_POOL],
+            tokens: [[0; 32]; MAX_TOKENS],
+            rows: [PrizeRow::zeroed(); PRIZE_ROWS],
         };
         for (dst, src) in c.blocks.iter_mut().zip(self.blocks.iter()) {
             *dst = Block {
@@ -272,8 +280,10 @@ impl SetCard {
         for (dst, src) in c.tiers.iter_mut().zip(self.tiers.iter()) {
             *dst = Tier { factor: src.factor, weight: src.weight };
         }
-        for (dst, src) in c.pool.iter_mut().zip(self.pool.iter()) {
-            *dst = PoolEntry { mint: src.mint, amount: src.amount, weight: src.weight, _pad: 0 };
+        c.tokens[..self.tokens.len()].copy_from_slice(&self.tokens);
+        for (dst, src) in c.rows.iter_mut().zip(self.prizes.iter()) {
+            dst.weight = src.weight;
+            dst.amounts[..src.amounts.len()].copy_from_slice(&src.amounts);
         }
 
         // Publish only after writing, so a card is never visible without content.
@@ -290,6 +300,31 @@ impl SetCard {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    /// The coin count and prize tiers. Until the sheet is re-tuned for tiers, the old pool stands in:
+    /// every coin in low/mid/high at x1/x8/x64, SOL alone in top at x1000.
+    fn prizes(c: &Value) -> (usize, Vec<InitPrizeRow>) {
+        if let Some(rows) = c["prizes"].as_array() {
+            let rows = rows.iter().map(|r| InitPrizeRow {
+                weight: r["weight"].as_u64().unwrap() as u32,
+                amounts: r["amounts"].as_array().unwrap().iter().map(|a| a.as_u64().unwrap()).collect(),
+            }).collect();
+            return (c["tokens"].as_array().unwrap().len(), rows);
+        }
+        let pool: Vec<u64> = c["pool"].as_array().unwrap().iter().map(|e| e["amount"].as_u64().unwrap()).collect();
+        let shares = [0.70, 0.20, 0.09];
+        let mut left = WEIGHT_TOTAL;
+        let mut rows: Vec<InitPrizeRow> = (0..3).map(|r| {
+            let w = (WEIGHT_TOTAL as f64 * shares[r]) as u64;
+            left -= w;
+            InitPrizeRow { weight: w as u32, amounts: pool.iter().map(|a| a * (1 << (3 * r))).collect() }
+        }).collect();
+        let sol = c["pool"].as_array().unwrap().iter().position(|e| e["token"] == "SOL").unwrap_or(0);
+        let mut top = vec![0; pool.len()];
+        top[sol] = pool[sol] * 1000;
+        rows.push(InitPrizeRow { weight: left as u32, amounts: top });
+        (pool.len(), rows)
+    }
 
     /// The sheet the balancing tool writes must be one this instruction accepts.
     fn sheet() -> Vec<(String, SetCard)> {
@@ -335,11 +370,8 @@ mod tests {
                             factor: t["factor"].as_u64().unwrap() as u32,
                             weight: t["weight"].as_u64().unwrap() as u32,
                         }).collect(),
-                        pool: c["pool"].as_array().unwrap().iter().enumerate().map(|(pi, e)| InitPoolEntry {
-                            mint: { let mut m = [0u8; 32]; m[0] = pi as u8; m }, // distinct; index 0 = SOL
-                            amount: e["amount"].as_u64().unwrap(),
-                            weight: e["weight"].as_u64().unwrap() as u32,
-                        }).collect(),
+                        tokens: (0..prizes(c).0).map(|t| [t as u8 + 1; 32]).collect(),
+                        prizes: prizes(c).1,
                     },
                 )
             })
@@ -362,8 +394,10 @@ mod tests {
             assert!(c.validate().is_err(), "a broken card was accepted");
         };
 
-        broken(&|c| c.pool[0].weight = c.pool[0].weight.wrapping_add(1)); // pool must partition 2^32
-        broken(&|c| c.pool[0].amount = 0);                               // a prize of nothing
+        broken(&|c| c.prizes[0].weight = c.prizes[0].weight.wrapping_add(1)); // tiers must partition 2^32
+        broken(&|c| c.prizes[3].amounts.fill(0));                        // a drawable tier with no coin
+        broken(&|c| { c.prizes.pop(); });                                // a tier missing
+        broken(&|c| { c.prizes[1].amounts.pop(); });                     // amounts out of step with the coins
         broken(&|c| c.pays[0].min = 0);                                  // pays on no matches
         broken(&|c| c.pays[0].min = 99);                                 // more than the scope holds
         broken(&|c| c.pays[0].scope = 0);                                // looks nowhere
@@ -374,7 +408,18 @@ mod tests {
         broken(&|c| c.blocks.reverse());                                 // jackpot no longer last
         broken(&|c| c.tiers.push(InitTier { factor: 1, weight: 0 }));    // a x1 multiplier
         broken(&|c| c.jackpot_hit = u32::MAX);                           // bands over 2^32
-        broken(&|c| c.pool.truncate(0));                                 // no pool at all
-        broken(&|c| c.pool[1].mint = c.pool[0].mint);                    // two entries share a mint
+        broken(&|c| c.tokens.truncate(0));                               // no coins at all
+        broken(&|c| c.tokens[1] = c.tokens[0]);                          // two coins share a mint
+    }
+
+    /// One card per transaction: the args must leave room for the signature, accounts and blockhash.
+    #[test]
+    fn every_card_fits_one_transaction() {
+        // 1232 less one signature, the header, four keys, the blockhash and the instruction framing
+        const ROOM: usize = 1232 - 1 - 64 - 3 - 1 - 4 * 32 - 32 - 1 - 1 - 1 - 3 - 2 - 1;
+        for (id, card) in sheet() {
+            let len = borsh::to_vec(&card).unwrap().len();
+            assert!(len <= ROOM, "{id}: {len} bytes of args, room for {ROOM}");
+        }
     }
 }
