@@ -108,6 +108,10 @@ enum Command {
         house_slots: u16,
         #[arg(long, default_value_t = 4)]
         jackpot_slots: u16,
+        /// Send Initialize even though the config exists: after an upgrade that changes the shelf's
+        /// layout, it re-stamps the version and grows the shelf to the new stride. Nothing else.
+        #[arg(long)]
+        restamp: bool,
     },
     /// Publishes the card sheet, one card per transaction, and — devnet, unless `--cards-only` —
     /// creates any 0-decimal stand-in mint it names that does not exist yet. Devnet publishes only
@@ -506,7 +510,7 @@ async fn main() -> Result<()> {
     let chain = Chain::connect(&cli.net).await?;
     let admin = chain.admin.pubkey();
     match cli.command {
-        Command::Setup { house_fund, house_slots, jackpot_slots } => {
+        Command::Setup { house_fund, house_slots, jackpot_slots, restamp } => {
             require_admin(&chain)?;
             let initialize = built(generated::ScratchCards::initialize_instruction(
                 admin, config(), house(), jackpot(), analytics(), permission::address(&analytics()), PERMISSION_PROGRAM,
@@ -514,6 +518,11 @@ async fn main() -> Result<()> {
                 // A fresh shelf: cards come from `publish`.
                 Initialize { card_count: 0 },
             ))?;
+            if restamp {
+                let signature = chain.base.send(&[initialize], &[&chain.admin]).await?;
+                println!("config re-stamped v{}  {}", scratch_cards::state::config::VERSION, short(signature));
+                return Ok(());
+            }
             let plan = Setup {
                 initialize,
                 slots: vec![house_slots, jackpot_slots],
