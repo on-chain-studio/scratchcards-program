@@ -12,6 +12,8 @@ default = ["pinocchio"]
 # Solarium's `#[program]` generates the Pinocchio dispatch when the program crate has this on.
 pinocchio = []
 no-entrypoint = []
+# Devnet builds only: `FabricateCard` (33), which writes a card account from given bytes.
+devnet-debug = []
 
 [dependencies]
 solarium = { git = "https://github.com/sensorial-systems/solarium", rev = "85f77a6ac12ea26a65b5e950a0f463e898399939" }

@@ -162,7 +162,7 @@ fn retired_numbers_are_no_ops_too() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_past_the_list_are_invalid_data() {
     let table = Table::new();
-    for retired in [33u64, 34, 255, 1 << 40] {
+    for retired in [34u64, 35, 255, 1 << 40] {
         let mut instruction = table.reveal(vrf_identity(), &[]);
         instruction.data[..8].copy_from_slice(&retired.to_le_bytes());
         let result = mollusk().process_instruction(
@@ -224,3 +224,36 @@ fn another_ledger_is_not_the_pot() {
     assert_eq!(result.raw_result, Err(InstructionError::Custom(CoreError::InvalidPDA as u32)));
 }
 
+
+/// `FabricateCard` (33) in the build this file tests: refused outright without `devnet-debug`,
+/// and with it, admin-gated and reaching the Magic CPI (absent here, so MissingAccount).
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn fabricate_card_is_a_devnet_debug_build_s_alone() {
+    let admin = key(casino_core::ids::OPS_KEY.to_bytes());
+    let stranger = Pubkey::new_unique();
+    let user = Pubkey::new_unique();
+    let (card, _) = Pubkey::find_program_address(&[b"card", user.as_ref()], &program());
+    let (house, _) = Pubkey::find_program_address(&[b"house"], &program());
+    let vault = key(casino_core::magicblock::EPHEMERAL_VAULT_ID.to_bytes());
+    let magic = key(casino_core::magicblock::MAGIC_PROGRAM_ID.to_bytes());
+    let args = [user.to_bytes().as_slice(), &4u32.to_le_bytes(), &[1, 2, 3, 4]].concat();
+    let ix = |signer: Pubkey| Instruction::new_with_bytes(program(), &input(33, &args), vec![
+        AccountMeta::new_readonly(signer, true), AccountMeta::new(house, false), AccountMeta::new(card, false),
+        AccountMeta::new(vault, false), AccountMeta::new_readonly(magic, false),
+    ]);
+    let accounts = |signer: Pubkey| vec![
+        (signer, wallet()), (house, Account::new(1_000_000_000, 0, &program())), (card, Account::new(0, 0, &Pubkey::default())),
+        (vault, Account::new(1, 0, &Pubkey::default())),
+        (magic, Account { lamports: 1, data: vec![], owner: Pubkey::default(), executable: true, rent_epoch: 0 }),
+    ];
+    let result = mollusk().process_instruction(&ix(admin), &accounts(admin));
+    if cfg!(feature = "devnet-debug") {
+        // every gate passed: the Magic program is the one thing Mollusk cannot run
+        assert_eq!(result.raw_result, Err(InstructionError::UnsupportedProgramId), "should reach the Magic CPI");
+        let refused = mollusk().process_instruction(&ix(stranger), &accounts(stranger));
+        assert_eq!(refused.raw_result, Err(InstructionError::MissingRequiredSignature));
+    } else {
+        assert_eq!(result.raw_result, Err(InstructionError::InvalidInstructionData));
+    }
+}

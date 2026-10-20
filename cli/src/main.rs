@@ -179,6 +179,15 @@ enum Command {
         #[arg(long)]
         wallet: Option<PathBuf>,
     },
+    /// Devnet, debug build only: writes a player's card account from thin air — a collected
+    /// ticket of the v2 layout's size, its terms the live mainnet shelf's slot 0 — so the next
+    /// purchase has a card of another layout to resize. The program refuses it unless built with
+    /// `--features devnet-debug`.
+    FabricateV2Card {
+        /// The player whose card slot to fabricate; the admin by default.
+        #[arg(long)]
+        wallet: Option<PathBuf>,
+    },
     /// Plays real cards: buy, reveal, collect.
     Play {
         #[arg(default_value_t = 3)]
@@ -595,6 +604,37 @@ async fn main() -> Result<()> {
         Command::TopUp { factor, fill, check } => float::top_up(&chain, factor, fill, check).await,
         Command::AcquireFloat { factor, slippage, swap } => float::acquire_float(&chain, factor, slippage, swap).await,
         Command::FetchPrices => prices::fetch(&chain.http).await,
+        Command::FabricateV2Card { wallet: path } => {
+            use scratch_cards::instructions::fabricate_card::FabricateCard;
+            require_admin(&chain)?;
+            if chain.net.mainnet {
+                bail!("devnet only");
+            }
+            let user = wallet(&chain, path)?.pubkey();
+            let rollup = chain.rollup().await?;
+            if rollup.account(&card_of(&user)).await?.is_some() {
+                bail!("{user} already has a card — close it first (close-card)");
+            }
+            // A collected v2 ticket, as the v2 program left one: header, 992-byte terms, generation.
+            let shelf: &[u8] = include_bytes!("../../tests/fixtures/mainnet_shelf_v2.bin");
+            let terms = &shelf[56..56 + scratch_cards::state::config::CARD_SIZE_V2];
+            let mut c: Card = bytemuck::Zeroable::zeroed();
+            c.discriminator = card::DISCRIMINATOR;
+            c.version = card::VERSION;
+            c.user = user.to_bytes();
+            c.status = scratch_cards::state::card::CardStatus::Collected as u64;
+            let mut data = bytemuck::bytes_of(&c).to_vec();
+            data.extend_from_slice(terms);
+            data.extend_from_slice(&1u64.to_le_bytes());
+            assert_eq!(data.len(), Card::PERSISTENT_SIZE_V2);
+            let ix = built(generated::ScratchCards::fabricate_card_instruction(
+                admin, house(), card_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, FabricateCard { user, data },
+            ))?;
+            let signature = rollup.send(&[ix], &[&chain.admin]).await?;
+            let len = rollup.account(&card_of(&user)).await?.map(|a| a.data.len()).unwrap_or(0);
+            println!("fabricated a collected v2 ticket for {user}: {len} bytes  {}", short(signature));
+            Ok(())
+        }
         Command::ClosePlayer { wallet: path } => {
             let wallet = wallet(&chain, path)?;
             let before = chain.balance(&wallet.pubkey()).await?;
