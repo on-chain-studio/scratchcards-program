@@ -64,6 +64,8 @@ pub struct Tier {
 #[derive(Deserialize, Debug, Clone)]
 pub struct PrizeRow {
     pub weight: u32,
+    /// the frame the apps draw: 0 coin, 1 group, 2 stack, 3 sack
+    pub tier: u8,
     pub amounts: Vec<u64>,
 }
 
@@ -82,7 +84,7 @@ pub struct Card {
     pub pays: Vec<Pay>,
     pub tiers: Vec<Tier>,
     pub tokens: Vec<String>,
-    /// low, mid, high, top
+    /// cheapest first, one to four
     pub prizes: Vec<PrizeRow>,
 }
 
@@ -192,12 +194,12 @@ pub fn prize_rows(card: &Card, mainnet: bool) -> Result<Vec<PrizeRow>> {
         .iter()
         .enumerate()
         .map(|(r, row)| {
-            if row.weight > 0 && row.amounts[sol] == 0 {
+            if (row.weight > 0 || card.prizes.len() == 1) && row.amounts[sol] == 0 {
                 bail!("{}: tier {r} offers no SOL to pay on devnet", card.id);
             }
             let mut amounts = vec![0; row.amounts.len()];
             amounts[sol] = row.amounts[sol];
-            Ok(PrizeRow { weight: row.weight, amounts })
+            Ok(PrizeRow { weight: row.weight, tier: row.tier, amounts })
         })
         .collect()
 }
@@ -244,7 +246,7 @@ impl Card {
             pays: self.pays.iter().map(|p| InitPay { scope: p.scope, weight: p.weight, min: p.min, flags: p.flags, mult: p.mult }).collect(),
             tiers: self.tiers.iter().map(|t| InitTier { factor: t.factor, weight: t.weight }).collect(),
             tokens: self.tokens.iter().map(|t| Ok(mints.mint(t)?.to_bytes())).collect::<Result<_>>()?,
-            prizes: rows.into_iter().map(|r| InitPrizeRow { weight: r.weight, amounts: r.amounts }).collect(),
+            prizes: rows.into_iter().map(|r| InitPrizeRow { weight: r.weight, tier: r.tier, amounts: r.amounts }).collect(),
         })
     }
 }
@@ -258,6 +260,7 @@ pub fn expected(set: &SetCard) -> CardConfig {
     card.mode = set.mode;
     card.roll = set.roll;
     card.kind = set.kind;
+    card.row_len = set.prizes.len() as u8;
     card.block_len = set.blocks.len() as u8;
     card.pay_len = set.pays.len() as u8;
     card.tier_len = set.tiers.len() as u8;
@@ -275,6 +278,7 @@ pub fn expected(set: &SetCard) -> CardConfig {
     card.tokens[..set.tokens.len()].copy_from_slice(&set.tokens);
     for (dst, r) in card.rows.iter_mut().zip(&set.prizes) {
         dst.weight = r.weight;
+        dst.tier = r.tier;
         dst.amounts[..r.amounts.len()].copy_from_slice(&r.amounts);
     }
     card
@@ -301,6 +305,7 @@ pub fn differences(chain: &CardConfig, want: &CardConfig, mints: &Mints) -> Vec<
     check("pays".into(), chain.pay_len.to_string(), want.pay_len.to_string());
     check("tiers".into(), chain.tier_len.to_string(), want.tier_len.to_string());
     check("coins".into(), chain.token_len.to_string(), want.token_len.to_string());
+    check("prize tiers".into(), chain.row_len.to_string(), want.row_len.to_string());
     for (i, (a, b)) in chain.blocks().iter().zip(want.blocks()).enumerate() {
         let show = |x: &scratch_cards::state::config::Block| format!("role {} count {} cols {} flags {} a {} b {}", x.role, x.count, x.cols, x.flags, x.a, x.b);
         check(format!("block {i}"), show(a), show(b));
@@ -316,8 +321,8 @@ pub fn differences(chain: &CardConfig, want: &CardConfig, mints: &Mints) -> Vec<
         let show = |m: &[u8; 32]| mints.symbol(&Pubkey::new_from_array(*m));
         check(format!("coin {i}"), show(a), show(b));
     }
-    for (r, (a, b)) in chain.rows.iter().zip(&want.rows).enumerate() {
-        let show = |x: &scratch_cards::state::config::PrizeRow| format!("weight {} amounts {:?}", x.weight, x.amounts);
+    for (r, (a, b)) in chain.rows().iter().zip(want.rows()).enumerate() {
+        let show = |x: &scratch_cards::state::config::PrizeRow| format!("tier {} weight {} amounts {:?}", x.tier, x.weight, x.amounts);
         check(format!("prize tier {r}"), show(a), show(b));
     }
     if out.is_empty() && bytemuck::bytes_of(chain) != bytemuck::bytes_of(want) {
@@ -348,7 +353,8 @@ pub fn worst_cases(cards: &[CardConfig], mints: &Mints) -> BTreeMap<String, u128
         let factor = if card.roll == ROLL_INDEPENDENT { mults.iter().sum() } else { *mults.iter().max().unwrap() };
         let top_tier = card.tiers().iter().filter(|t| t.weight > 0).map(|t| t.factor as u128).max().unwrap_or(1).max(1);
         for (t, mint) in card.tokens().iter().enumerate() {
-            let Some(dearest) = card.rows.iter().filter(|r| r.weight > 0).map(|r| r.amounts[t]).max().filter(|a| *a > 0) else {
+            let lone = card.rows().len() == 1;
+            let Some(dearest) = card.rows().iter().filter(|r| r.weight > 0 || lone).map(|r| r.amounts[t]).max().filter(|a| *a > 0) else {
                 continue;
             };
             let symbol = mints.symbol(&Pubkey::new_from_array(*mint));

@@ -690,6 +690,7 @@ mod tests {
                 want.extend_from_slice(&(rows.len() as u32).to_le_bytes());
                 for r in &rows {
                     want.extend_from_slice(&r.weight.to_le_bytes());
+                    want.push(r.tier);
                     want.extend_from_slice(&(r.amounts.len() as u32).to_le_bytes());
                     for a in &r.amounts {
                         want.extend_from_slice(&a.to_le_bytes());

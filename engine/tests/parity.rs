@@ -14,6 +14,7 @@ use serde_json::Value;
 fn prizes(c: &Value, card: &mut CardConfig) -> Vec<String> {
     let tokens: Vec<String> = c["tokens"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect();
     card.token_len = tokens.len() as u8;
+    card.row_len = c["prizes"].as_array().unwrap().len() as u8;
     for (r, row) in c["prizes"].as_array().unwrap().iter().enumerate() {
         card.rows[r].weight = row["weight"].as_u64().unwrap() as u32;
         for (t, a) in row["amounts"].as_array().unwrap().iter().enumerate() {
@@ -257,9 +258,11 @@ fn a_prize_is_a_tier_by_weight_then_any_of_its_coins() {
         }
         assert!(wins >= 10_000, "{id}: only {wins} wins in 400,000 rolls — too few to judge the draw");
         eprintln!("{id}: {wins} wins, by tier {by_row:?}");
-        let total: u64 = card.rows.iter().map(|r| r.weight as u64).sum();
-        for r in 0..PRIZE_ROWS {
-            let want = card.rows[r].weight as f64 / total as f64;
+        let rows = card.prize_rows();
+        let total: u64 = card.rows[..rows].iter().map(|r| r.weight as u64).sum();
+        for r in 0..rows {
+            // a lone tier is always the prize, and holds weight 0
+            let want = if rows == 1 { 1.0 } else { card.rows[r].weight as f64 / total as f64 };
             let got = by_row[r] as f64 / wins as f64;
             assert!((got - want).abs() < 0.01 + want * 0.05, "{id}: tier {r} drawn {got:.4}, weighted {want:.4}");
             let coins: Vec<usize> = (0..card.tokens()).filter(|&t| card.rows[r].amounts[t] > 0).collect();

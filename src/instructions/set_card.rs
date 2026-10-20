@@ -36,6 +36,7 @@ pub struct InitTier {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct InitPrizeRow {
     pub weight:  u32,
+    pub tier:    u8,
     pub amounts: Vec<u64>,
 }
 
@@ -77,7 +78,7 @@ impl SetCard {
         need(!self.pays.is_empty() && self.pays.len() <= MAX_PAYS)?;
         need(self.tiers.len() <= MAX_TIERS)?;
         need(!self.tokens.is_empty() && self.tokens.len() <= MAX_TOKENS)?;
-        need(self.prizes.len() == PRIZE_ROWS)?;
+        need(!self.prizes.is_empty() && self.prizes.len() <= PRIZE_ROWS)?;
 
         let cells: usize = self.blocks.iter().map(|b| b.count as usize).sum();
         need(cells > 0 && cells <= MAX_CELLS)?;
@@ -102,11 +103,17 @@ impl SetCard {
         let body_mask: u32 = if body >= 32 { u32::MAX } else { (1u32 << body) - 1 };
 
         // ── prize tiers: an exact partition, so `pick` can walk it without a modulo and never miss
+        // A lone tier is always the prize: one u32 can't hold the whole 2^32, so it holds 0.
         let row_total: u64 = self.prizes.iter().map(|r| r.weight as u64).sum();
-        need(row_total == WEIGHT_TOTAL)?;
+        need(if self.prizes.len() == 1 { row_total == 0 } else { row_total == WEIGHT_TOTAL })?;
         need(self.prizes.iter().all(|r| r.amounts.len() == self.tokens.len()))?;
         // A tier that can be drawn must have a coin to pay, or the win has nothing to show.
-        need(self.prizes.iter().all(|r| r.weight == 0 || r.amounts.iter().any(|&a| a > 0)))?;
+        let lone = self.prizes.len() == 1;
+        need(self.prizes.iter().all(|r| (r.weight == 0 && !lone) || r.amounts.iter().any(|&a| a > 0)))?;
+        // Two tiers in one frame would print different prizes as the same plate.
+        for (i, r) in self.prizes.iter().enumerate() {
+            need((r.tier as usize) < PRIZE_ROWS && !self.prizes[..i].iter().any(|q| q.tier == r.tier))?;
+        }
         // Distinct mints: the client shows a coin by its mint, so duplicates are indistinguishable.
         for (i, m) in self.tokens.iter().enumerate() {
             need(!self.tokens[..i].contains(m))?;
@@ -259,7 +266,7 @@ impl SetCard {
             tier_len: self.tiers.len() as u8,
             token_len: self.tokens.len() as u8,
             kind: self.kind,
-            _pad: 0,
+            row_len: self.prizes.len() as u8,
             mode_args: self.mode_args,
             blocks: [Block::zeroed(); MAX_BLOCKS],
             pays: [Pay::zeroed(); MAX_PAYS],
@@ -285,6 +292,7 @@ impl SetCard {
         c.tokens[..self.tokens.len()].copy_from_slice(&self.tokens);
         for (dst, src) in c.rows.iter_mut().zip(self.prizes.iter()) {
             dst.weight = src.weight;
+            dst.tier = src.tier;
             dst.amounts[..src.amounts.len()].copy_from_slice(&src.amounts);
         }
 
@@ -307,6 +315,7 @@ mod tests {
     fn prizes(c: &Value) -> (usize, Vec<InitPrizeRow>) {
         let rows = c["prizes"].as_array().unwrap().iter().map(|r| InitPrizeRow {
             weight: r["weight"].as_u64().unwrap() as u32,
+            tier: r["tier"].as_u64().unwrap() as u8,
             amounts: r["amounts"].as_array().unwrap().iter().map(|a| a.as_u64().unwrap()).collect(),
         }).collect();
         (c["tokens"].as_array().unwrap().len(), rows)
@@ -385,6 +394,9 @@ mod tests {
         broken(&|c| c.prizes[3].amounts.fill(0));                        // a drawable tier with no coin
         broken(&|c| { c.prizes.pop(); });                                // a tier missing
         broken(&|c| { c.prizes[1].amounts.pop(); });                     // amounts out of step with the coins
+        broken(&|c| c.prizes[1].tier = c.prizes[0].tier);                // two tiers in one frame
+        broken(&|c| c.prizes[0].tier = 4);                               // no such frame
+        broken(&|c| { c.prizes.truncate(1); });                          // a lone tier must hold 0
         broken(&|c| c.pays[0].min = 0);                                  // pays on no matches
         broken(&|c| c.pays[0].min = 99);                                 // more than the scope holds
         broken(&|c| c.pays[0].scope = 0);                                // looks nowhere

@@ -1,5 +1,5 @@
 import {
-  Card, TOTAL, MAX_TOKENS, PRIZE_ROWS, ROW_NAMES, MAX_BLOCKS, MAX_PAYS, MAX_TIERS, MAX_CELLS,
+  Card, TOTAL, MAX_TOKENS, PRIZE_ROWS, TIER_NAMES, SACK, MAX_BLOCKS, MAX_PAYS, MAX_TIERS, MAX_CELLS,
   CELL_PAYLOAD_MAX, MARKED, offered, popcount, cellsOf, bodyLen, cellCount, disjoint,
   jackpotHitFor, JACKPOT_SHARE,
 } from './types'
@@ -41,8 +41,12 @@ export function validate(card: Card): Check[] {
          : 'overlapping scopes cannot roll independently and stay exact')
   }
 
-  add(rowSum === TOTAL, 'Σ prize tier weight = 2³²',
-    rowSum === TOTAL ? 'exact' : `${rowSum.toLocaleString()}, off by ${(rowSum - TOTAL).toLocaleString()}`)
+  if (card.prizes.length === 1) {
+    add(rowSum === 0, 'a lone prize tier holds weight 0', rowSum === 0 ? 'always the prize' : `holds ${rowSum.toLocaleString()}`)
+  } else {
+    add(rowSum === TOTAL, 'Σ prize tier weight = 2³²',
+      rowSum === TOTAL ? 'exact' : `${rowSum.toLocaleString()}, off by ${(rowSum - TOTAL).toLocaleString()}`)
+  }
 
   const wantHit = jackpotHitFor(card.priceLamports)
   const perSol = (card.jackpotHitWeight / TOTAL) / (card.priceLamports / 1e9)
@@ -64,16 +68,20 @@ export function validate(card: Card): Check[] {
   const twice = card.tokens.filter((t, i) => card.tokens.indexOf(t) !== i)
   add(twice.length === 0, 'each coin listed once',
     twice.length ? `${twice.join(', ')} twice — the client shows a coin by its mint` : 'distinct')
-  add(card.prizes.length === PRIZE_ROWS && card.prizes.every(r => r.amounts.length === card.tokens.length),
-    `${PRIZE_ROWS} prize tiers, one amount per coin`, `${card.prizes.length} tiers`)
-  const empty = card.prizes.map((r, i) => (r.weight > 0 && !offered(r).length ? ROW_NAMES[i] : '')).filter(Boolean)
+  add(card.prizes.length >= 1 && card.prizes.length <= PRIZE_ROWS && card.prizes.every(r => r.amounts.length === card.tokens.length),
+    `1 – ${PRIZE_ROWS} prize tiers, one amount per coin`, `${card.prizes.length} tiers`)
+  const ids = card.prizes.map(r => r.tier)
+  add(ids.every((id, i) => id >= 0 && id < PRIZE_ROWS && ids.indexOf(id) === i), 'each tier its own frame',
+    ids.map(id => TIER_NAMES[id] ?? `#${id}`).join(', '))
+  const lone = card.prizes.length === 1
+  const empty = card.prizes.map(r => ((r.weight > 0 || lone) && !offered(r).length ? TIER_NAMES[r.tier] : '')).filter(Boolean)
   add(empty.length === 0, 'every drawable tier offers a coin',
     empty.length ? `${empty.join(', ')} can be drawn with nothing to pay` : 'ok')
-  // House policy, not a program rule: the top tier is the SOL headline.
-  const top = card.prizes[PRIZE_ROWS - 1]
-  const topCoins = top ? offered(top).map(t => card.tokens[t]) : []
-  add(topCoins.length === 1 && topCoins[0] === 'SOL', 'top tier pays SOL alone',
-    topCoins.length ? topCoins.join(', ') : 'offers nothing')
+  // House policy, not a program rule: the sack is the SOL headline.
+  const sack = card.prizes.find(r => r.tier === SACK)
+  const sackCoins = sack ? offered(sack).map(t => card.tokens[t]) : []
+  add(!sack || (sackCoins.length === 1 && sackCoins[0] === 'SOL'), 'the sack pays SOL alone',
+    sack ? (sackCoins.join(', ') || 'offers nothing') : 'no sack on this card')
   add(card.blocks.length >= 1 && card.blocks.length <= MAX_BLOCKS,
     `blocks ≤ ${MAX_BLOCKS}`, `${card.blocks.length} blocks`)
   add(card.pays.length >= 1 && card.pays.length <= MAX_PAYS,

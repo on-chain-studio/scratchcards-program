@@ -12,7 +12,7 @@ pub const MAX_TOKENS: usize = 12;
 pub const MAX_BLOCKS: usize = 8;
 pub const MAX_PAYS:   usize = 32;
 pub const MAX_TIERS:  usize = 4;
-/// Prize tiers, low to top.
+/// Prize tiers a card may have, and frames there are to draw them in.
 pub const PRIZE_ROWS: usize = 4;
 
 /// Width of the `u32` scope bitmask — cells can't exceed this.
@@ -77,13 +77,16 @@ pub struct Tier {
     pub weight: u32,
 }
 
-/// One prize tier: how often a win lands in it, and what each coin pays there in base units.
-/// A zero amount means the coin isn't offered in this tier.
+/// One prize tier: how often a win lands in it, which frame the apps draw around its coins, and
+/// what each coin pays there in base units. A zero amount means the coin isn't offered here.
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy)]
 pub struct PrizeRow {
+    /// Out of `WEIGHT_TOTAL`, across the card's rows. A lone row is always the prize and holds 0.
     pub weight:  u32,
-    pub _pad:    u32,
+    /// The frame: 0 coin, 1 group, 2 stack, 3 sack. The engine never reads it.
+    pub tier:    u8,
+    pub _pad:    [u8; 3],
     pub amounts: [u64; MAX_TOKENS],
 }
 
@@ -104,7 +107,7 @@ pub struct CardConfig {
     pub token_len: u8,
     /// Which card this is, for the apps' copy and art; 0 = unnamed. The engine never reads it.
     pub kind:      u8,
-    pub _pad:      u8,
+    pub row_len:   u8,
     /// Compare: house block, mine block, prize block, strict.
     pub mode_args: [u16; 4],
     pub blocks: [Block; MAX_BLOCKS],
@@ -140,6 +143,9 @@ impl CardConfig {
     }
     pub fn tiers(&self) -> &[Tier] {
         &self.tiers[..(self.tier_len as usize).min(MAX_TIERS)]
+    }
+    pub fn rows(&self) -> &[PrizeRow] {
+        &self.rows[..(self.row_len as usize).min(PRIZE_ROWS)]
     }
     pub fn tokens(&self) -> &[[u8; 32]] {
         &self.tokens[..(self.token_len as usize).min(MAX_TOKENS)]

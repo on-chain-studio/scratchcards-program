@@ -4,7 +4,9 @@ export const TOTAL = 2 ** 32
 
 export const MAX_TOKENS = 12
 export const PRIZE_ROWS = 4
-export const ROW_NAMES = ['low', 'mid', 'high', 'top'] as const
+/** The frame each tier id is drawn in, around the coin. */
+export const TIER_NAMES = ['coin', 'group', 'stack', 'sack'] as const
+export const SACK = 3
 export const MAX_BLOCKS = 8
 export const MAX_PAYS = 32
 export const MAX_TIERS = 4
@@ -75,11 +77,19 @@ export interface Tier {
 /**
  * One prize tier. A win lands in a tier by `weight`, then pays one of the coins the tier offers,
  * drawn uniformly — `amounts` is per coin in the card's `tokens` order, base units, 0 = not offered.
+ * `tier` is the frame the apps draw (see TIER_NAMES); a card's tiers are cheapest first.
  */
 export interface PrizeRow {
   weight: number
+  tier: number
   amounts: number[]
 }
+
+/**
+ * A tier's share of wins. A lone tier is always the prize — one u32 can't hold the whole 2^32 —
+ * so it publishes weight 0.
+ */
+export const shareOf = (weights: number[], r: number) => (weights.length === 1 ? 1 : weights[r] / TOTAL)
 
 /**
  * What `Build ladder` was last set to.
@@ -118,7 +128,7 @@ export interface Card {
   tiers: Tier[]
   /** the coins this card can pay, by symbol; SOL is the native coin */
   tokens: string[]
-  /** low, mid, high, top */
+  /** cheapest first, 1 to PRIZE_ROWS of them */
   prizes: PrizeRow[]
 }
 

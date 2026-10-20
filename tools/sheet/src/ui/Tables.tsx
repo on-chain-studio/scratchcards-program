@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Card, MAX_TOKENS, ROW_NAMES, TOTAL, whole } from '../model/types'
+import { Card, MAX_TOKENS, TIER_NAMES, shareOf, whole } from '../model/types'
 import { Summary, Prices } from '../model/analytics'
 import { isNice, nice } from '../model/solve'
 import { fmt, usd, pct, oneIn } from './format'
@@ -40,9 +40,10 @@ export function PrizeTable({
           <tr>
             <th>Coin</th>
             <th>Price</th>
-            {ROW_NAMES.map((name, r) => (
-              <th key={name} title="the tier's draw chance, given a win">
-                {name} <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{pct((card.prizes[r]?.weight ?? 0) / TOTAL, 1)}</span>
+            {card.prizes.map((row, r) => (
+              <th key={row.tier} title="the tier's draw chance, given a win">
+                {TIER_NAMES[row.tier] ?? row.tier}{' '}
+                <span style={{ color: 'var(--muted)', fontWeight: 400 }}>{pct(shareOf(card.prizes.map(p => p.weight), r), 1)}</span>
               </th>
             ))}
             <th>RTP</th>
@@ -59,7 +60,7 @@ export function PrizeTable({
                 if (units <= 0) {
                   return (
                     <td key={r}>
-                      <button className="mini" title={`offer ${token} in the ${ROW_NAMES[r]} tier`}
+                      <button className="mini" title={`offer ${token} in the ${TIER_NAMES[row.tier]} tier`}
                         onClick={() => onOffer(r, t, true)}>+</button>
                     </td>
                   )
@@ -77,7 +78,7 @@ export function PrizeTable({
                         not round
                       </button>
                     )}
-                    <button className="mini" title={`stop offering ${token} in the ${ROW_NAMES[r]} tier`}
+                    <button className="mini" title={`stop offering ${token} in the ${TIER_NAMES[row.tier]} tier`}
                       onClick={() => onOffer(r, t, false)}>−</button>
                   </td>
                 )
@@ -105,7 +106,7 @@ export function PrizeTable({
             {spare.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-            offered in low, mid and high at each tier's value
+            offered in every tier but the sack, at each tier's value
           </span>
         </div>
       )}

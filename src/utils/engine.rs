@@ -18,6 +18,7 @@ fn shared(card: &CardConfig) -> scratch_engine::CardConfig {
         pay_len: card.pay_len,
         tier_len: card.tier_len,
         token_len: card.token_len,
+        row_len: card.row_len,
         ..Default::default()
     };
     for (dst, src) in out.blocks.iter_mut().zip(card.blocks.iter()) {

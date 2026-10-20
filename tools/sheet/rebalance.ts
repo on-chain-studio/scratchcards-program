@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { solveLadder, solveBalanced } from './src/model/solve.ts'
 import { analyse } from './src/model/analytics.ts'
 import { validate } from './src/model/validate.ts'
-import { backfill, DEFAULT_LADDER, TARGET_RTP, ROW_NAMES, jackpotHitFor, decimalsOf } from './src/model/types.ts'
+import { backfill, DEFAULT_LADDER, TARGET_RTP, TIER_NAMES, jackpotHitFor, decimalsOf } from './src/model/types.ts'
 import type { Card, Design } from './src/model/types.ts'
 
 const CARDS = new URL('./cards.json', import.meta.url)
@@ -65,7 +65,7 @@ for (const card of cards) {
     // Follows price rather than being carried alongside it. Price is the only field of a card
     // edited by hand — the tool has no control for it — so this is where the two would drift.
     jackpotHitWeight: jackpotHitFor(card.priceLamports),
-    prizes: card.prizes.map((_, r) => ({ weight: L.weights[r], amounts: L.amounts[r] })),
+    prizes: card.prizes.map((row, r) => ({ ...row, weight: L.weights[r], amounts: L.amounts[r] })),
     pays: card.pays.map((p, i) => ({ ...p, weight: L.payWeights[i] })),
   }
   const after = analyse(solved, prices)
@@ -80,7 +80,7 @@ for (const card of cards) {
     return `${p.token} ${whole(p.amount)}→${paint}${whole(to)}\x1b[0m`
   }
   const moved = card.prizes.flatMap((row, r) => row.amounts.map((amount, t) =>
-    (amount === L.amounts[r][t] ? null : `${ROW_NAMES[r]} ${delta({ token: card.tokens[t], amount }, L.amounts[r][t])}`)))
+    (amount === L.amounts[r][t] ? null : `${TIER_NAMES[row.tier]} ${delta({ token: card.tokens[t], amount }, L.amounts[r][t])}`)))
     .filter(Boolean)
 
   console.log(

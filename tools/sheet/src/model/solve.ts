@@ -1,4 +1,4 @@
-import { Card, PrizeRow, TOTAL, LINEAR, TARGET_RTP, PRIZE_ROWS, decimalsOf, normalize, offered, rowUsd } from './types'
+import { Card, PrizeRow, TOTAL, LINEAR, TARGET_RTP, decimalsOf, normalize, offered, rowUsd, shareOf } from './types'
 import { Prices } from './analytics'
 
 /**
@@ -53,7 +53,8 @@ export function matchingAmount(card: Card, prices: Prices, token: string, r: num
 export function returnUsd(card: Card, prices: Prices): number {
   const tierSum = card.tiers.reduce((n, t) => n + t.weight, 0)
   const multiplier = 1 - tierSum / TOTAL + card.tiers.reduce((n, t) => n + (t.weight / TOTAL) * t.factor, 0)
-  const prize = card.prizes.reduce((n, row) => n + (row.weight / TOTAL) * rowUsd(card.tokens, row.amounts, prices), 0)
+  const weights = card.prizes.map(r => r.weight)
+  const prize = card.prizes.reduce((n, row, r) => n + shareOf(weights, r) * rowUsd(card.tokens, row.amounts, prices), 0)
   const outcomes = card.pays.reduce((n, p) => n + (p.weight / TOTAL) * p.mult * ((p.flags & LINEAR) ? p.min : 1), 0)
   return outcomes * multiplier * prize
 }
@@ -109,17 +110,18 @@ export interface Ladder {
   span: number
 }
 
-const TOP = PRIZE_ROWS - 1
+/** The coins each tier offers, as the card says now. */
+const offering = (card: Card) => card.prizes.map(offered)
 
-/** The coins each tier offers, as the card says now; a tier offering none is left empty. */
-const offering = (card: Card) =>
-  Array.from({ length: PRIZE_ROWS }, (_, r) => card.prizes[r] ? offered(card.prizes[r]) : [])
+/** The dearest tier's index. */
+const topOf = (card: Card) => card.prizes.length - 1
 
 /**
  * The value each tier is designed to pay, from the two ends of the curve.
  *
- * A multiple is `tier value x pay mult x multiplier / ticket`, so min pins the low tier and max
- * the top one outright; mid and high interpolate geometrically between them.
+ * A multiple is `tier value x pay mult x multiplier / ticket`, so min pins the cheapest tier and
+ * max the dearest outright; any between interpolate geometrically. A lone tier sits at min — the
+ * card's spread is then all in its pay table.
  */
 function tierValues(card: Card, prices: Prices, minX: number, maxX: number) {
   const priceUsd = (card.priceLamports / 1e9) * (prices.SOL ?? 0)
@@ -133,7 +135,8 @@ function tierValues(card: Card, prices: Prices, minX: number, maxX: number) {
   // is then min x paySpan whatever `max` says, which is what the caller is told.
   const hi = Math.max((maxX * priceUsd) / (Math.max(...mults) * topTier), lo)
   const ratio = hi / lo
-  const values = Array.from({ length: PRIZE_ROWS }, (_, r) => lo * Math.pow(ratio, r / TOP))
+  const TOP = topOf(card)
+  const values = card.prizes.map((_, r) => (TOP === 0 ? lo : lo * Math.pow(ratio, r / TOP)))
   return { priceUsd, lo, values, overrun: paySpan / span, span }
 }
 
@@ -173,6 +176,7 @@ export function solveLadder(
   const { priceUsd, values, overrun, span } = tierValues(card, prices, minX, maxX)
   if (priceUsd <= 0 || !card.tokens.length || !card.pays.length) return empty
 
+  const TOP = topOf(card)
   const offers = offering(card)
   const ideal = (r: number, t: number) => {
     const price = prices[card.tokens[t]] ?? 0
@@ -192,6 +196,7 @@ export function solveLadder(
   // The headline must stay the dearest print on the card: a high-tier coin with coarse steps can
   // round up past it, and then the card's face is the wrong prize. Step it up until it out-values
   // everything below.
+  if (TOP > 0) {
   const below = Math.max(0, ...amounts.slice(0, TOP).flatMap(row => row.map((a, t) =>
     (a / 10 ** decimalsOf(card.tokens[t])) * (prices[card.tokens[t]] ?? 0))))
   amounts[TOP] = amounts[TOP].map((a, t) => {
@@ -200,6 +205,7 @@ export function solveLadder(
     const scale = 10 ** decimalsOf(tok)
     return (a / scale) * price <= below ? niceUp(((below * 1.02) / price) * scale, tok) : a
   })
+  }
 
   const out = weighAmounts(card, prices, amounts, values, bend, target, topOneIn)
   return { amounts, ...out, overrun, span }
@@ -215,6 +221,7 @@ function weighAmounts(
   card: Card, prices: Prices, amounts: number[][], ideals: number[], bend: number,
   target: number, topOneIn: number,
 ): { weights: number[]; payWeights: number[]; rtp: number; topOdds: number } {
+  const TOP = topOf(card)
   const mults = card.pays.map(p => p.mult * ((p.flags & LINEAR) ? p.min : 1))
 
   // Bend is a statement about multiples, not about tiers: an outcome paying m should be
@@ -255,7 +262,9 @@ function weighAmounts(
 
   const assemble = (share: number | null, bp = bend) => {
     let weights: number[]
-    if (share === null || share === undefined || !live[TOP]) {
+    if (TOP === 0) {
+      weights = [0]
+    } else if (share === null || share === undefined || !live[TOP]) {
       weights = normalize(realised.map((v, r) => (live[r] ? bendOf(v) : 0)))
     } else {
       // A share above 1/n cannot be monotone -- the top would beat a cheaper tier by pigeonhole.
@@ -269,7 +278,7 @@ function weighAmounts(
        * Waterfill: flooring one shrinks the rest, which may push another under the floor, so
        * repeat until the floored set is stable.
        */
-      for (let pass = 0; pass < PRIZE_ROWS; pass++) {
+      for (let pass = 0; pass < amounts.length; pass++) {
         const low = rest.map((w, r) => (live[r] && r !== TOP && w < pinned ? r : -1)).filter(r => r >= 0)
         if (!low.length) break
         const free = rest.map((_, r) => r).filter(r => live[r] && r !== TOP && !low.includes(r))
@@ -284,7 +293,7 @@ function weighAmounts(
     }
     const staged: Card = {
       ...card,
-      prizes: amounts.map((a, r): PrizeRow => ({ weight: weights[r], amounts: a })),
+      prizes: amounts.map((a, r): PrizeRow => ({ ...card.prizes[r], weight: weights[r], amounts: a })),
       pays: card.pays.map((p, i) => ({ ...p, weight: shapedAt(bp)[i] })),
     }
     const solved = solveOdds(staged, prices, target)
@@ -295,12 +304,12 @@ function weighAmounts(
      * alone, and the tier share would overshoot it.
      */
     const achieved = topRoutes.reduce((n2, i) => n2 + solved.weights[i] / TOTAL, 0)
-      * (flat ? 1 : (weights[TOP] / TOTAL) * topShare)
+      * (flat ? 1 : shareOf(weights, TOP) * topShare)
     return { weights, payWeights: solved.weights, rtp: solved.rtp, achieved }
   }
 
   let out = assemble(null)
-  if (topOneIn && topOneIn > 0 && top >= 0) {
+  if (topOneIn && topOneIn > 0 && top >= 0 && TOP > 0) {
     /**
      * The pin has one dial, picked by the card's shape.
      *
@@ -364,8 +373,8 @@ export function solveBend(
   for (let i = 0; i < 40; i++) {
     const bend = (lo + hi) / 2
     const L = solveLadder(card, prices, minX, maxX, bend, target, topOneIn)
-    const tierSum = L.weights.reduce((a, w) => a + w, 0)
-    const win = L.payWeights.reduce((a, w) => a + w, 0) / TOTAL * (tierSum / TOTAL)
+    const drawn = L.weights.reduce((a, _, r) => a + shareOf(L.weights, r), 0)
+    const win = L.payWeights.reduce((a, w) => a + w, 0) / TOTAL * drawn
     if (1 / win > winOneIn) lo = bend; else hi = bend
   }
   return (lo + hi) / 2
@@ -401,11 +410,11 @@ export function solveShelf(
    */
   const capMults = card.pays.map(p => p.mult * ((p.flags & LINEAR) ? p.min : 1))
   const capTop = Math.max(...capMults)
+  const TOP = topOf(card)
   const headlineOneIn = (L: Ladder) => {
-    const tierSum = L.weights.reduce((a, w) => a + w, 0) || 1
     const pRoute = capMults.reduce((a, m, i) => a + (m === capTop ? L.payWeights[i] : 0), 0) / TOTAL
     const coins = Math.max(1, L.amounts[TOP].filter(a => a > 0).length)
-    const p = pRoute * (L.weights[TOP] / tierSum) / coins
+    const p = pRoute * shareOf(L.weights, TOP) / coins
     return p > 0 ? 1 / p : Infinity
   }
   const priceUsd2 = (card.priceLamports / 1e9) * (prices.SOL ?? 0)

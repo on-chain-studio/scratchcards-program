@@ -1,4 +1,4 @@
-import { Card, TOTAL, MARKED, LINEAR, DISTINCT, MULT_OK, ROW_NAMES } from './types'
+import { Card, TOTAL, MARKED, LINEAR, DISTINCT, MULT_OK, TIER_NAMES } from './types'
 
 const pct = (n: number) => `${((n / TOTAL) * 100).toFixed(4)}%`
 const int = (n: number) => n.toLocaleString('en-US').replace(/,/g, '_')
@@ -67,8 +67,8 @@ export function toAuthoring(card: Card): string {
   L.push(`  tokens: [${card.tokens.map(t => `'${t}'`).join(', ')}],`)
   L.push('  prizes: [')
   card.prizes.forEach((r, i) => {
-    L.push(`    { weight: ${int(r.weight).padStart(13)}, amounts: [${r.amounts.map(int).join(', ')}] },` +
-      `   // ${ROW_NAMES[i]} ${pct(r.weight)}`)
+    L.push(`    { weight: ${int(r.weight).padStart(13)}, tier: ${r.tier}, amounts: [${r.amounts.map(int).join(', ')}] },` +
+      `   // ${TIER_NAMES[r.tier] ?? '?'} ${card.prizes.length === 1 ? 'always' : pct(r.weight)}`)
   })
   L.push('  ],')
   L.push('}')

@@ -1,5 +1,5 @@
 import {
-  Card, TOTAL, LINEAR, JACKPOT_SHARE, ROW_NAMES, whole, duelsOf, offered,
+  Card, TOTAL, LINEAR, JACKPOT_SHARE, TIER_NAMES, whole, duelsOf, offered, shareOf,
 } from './types'
 import { scopeName } from './cards'
 
@@ -136,7 +136,7 @@ export function analyse(card: Card, prices: Prices): Summary {
 
     card.prizes.forEach((row, rowIndex) => {
       const coins = offered(row)
-      const pRow = row.weight / TOTAL
+      const pRow = shareOf(card.prizes.map(r => r.weight), rowIndex)
       if (pRow <= 0 || !coins.length) return
       coins.forEach(tokenIndex => {
         const token = card.tokens[tokenIndex]
@@ -154,7 +154,7 @@ export function analyse(card: Card, prices: Prices): Summary {
           rows.push({
             key: `${payIndex}:${rowIndex}:${tokenIndex}:${tier.index}`,
             payIndex, rowIndex, tokenIndex, tierIndex: tier.index,
-            label: `${scopeName(card, pay)} · ${ROW_NAMES[rowIndex]}`,
+            label: `${scopeName(card, pay)} · ${TIER_NAMES[row.tier] ?? row.tier}`,
             token,
             units, amount, usd,
             multiple: priceUsd > 0 ? usd / priceUsd : 0,

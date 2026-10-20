@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import rawPrices from '@prices'
 import { onDisk, seed, readDraft, writeDraft, clearDraft, saveToDisk, same,
   designOnDisk, readDesign, writeDesign, clearDesign, saveDesign, readPick, writePick } from './model/store'
-import { Card, Block, Pay, Design, TARGET_RTP, TOTAL, PRIZE_ROWS, DEFAULT_LADDER, normalize, bodyLen, popcount, settleRoll, jackpotHitFor } from './model/types'
+import { Card, Block, Pay, Design, TARGET_RTP, TOTAL, SACK, DEFAULT_LADDER, normalize, bodyLen, popcount, settleRoll, jackpotHitFor } from './model/types'
 import { analyse, Prices } from './model/analytics'
 import { validate } from './model/validate'
 import { toAuthoring, toJson } from './model/encode'
@@ -203,14 +203,13 @@ export function App() {
   const offerCoin = (r: number, t: number, on: boolean) =>
     patch(withAmount(r, t, on ? matchingAmount(card, PRICES, card.tokens[t], r) : 0))
 
-  /** A new coin arrives live in low, mid and high, at about what each of those tiers pays. */
+  /** A new coin arrives in every tier but the sack, at about what each tier pays. */
   const addToken = (token: string) => {
-    const top = PRIZE_ROWS - 1
     patch({
       ...card,
       tokens: [...card.tokens, token],
       prizes: card.prizes.map((row, r) => ({
-        ...row, amounts: [...row.amounts, r === top ? 0 : matchingAmount(card, PRICES, token, r)],
+        ...row, amounts: [...row.amounts, row.tier === SACK ? 0 : matchingAmount(card, PRICES, token, r)],
       })),
     })
   }
@@ -240,7 +239,7 @@ export function App() {
       solveLadder(card, PRICES, minX, maxX, bend, TARGET_RTP, topOneIn)
     patch({
       ...card,
-      prizes: card.prizes.map((_, r) => ({ weight: weights[r], amounts: amounts[r] })),
+      prizes: card.prizes.map((row, r) => ({ ...row, weight: weights[r], amounts: amounts[r] })),
       pays: card.pays.map((p, i) => ({ ...p, weight: payWeights[i] })),
     })
     setStatus(overrun > 1
@@ -274,7 +273,7 @@ export function App() {
       return settleRoll({
         ...c,
         jackpotHitWeight: jackpotHitFor(c.priceLamports),
-        prizes: c.prizes.map((_, r) => ({ weight: L.weights[r], amounts: L.amounts[r] })),
+        prizes: c.prizes.map((row, r) => ({ ...row, weight: L.weights[r], amounts: L.amounts[r] })),
         pays: c.pays.map((p, i) => ({ ...p, weight: L.payWeights[i] })),
       })
     })

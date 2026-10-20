@@ -15,8 +15,10 @@ fn prizes(c: &Value, card: &mut CardConfig) {
         card.tokens[i] = if t == "SOL" { [0; 32] } else { [i as u8 + 1; 32] };
         card.token_len = i as u8 + 1;
     }
+    card.row_len = c["prizes"].as_array().unwrap().len() as u8;
     for (r, row) in c["prizes"].as_array().unwrap().iter().enumerate() {
         card.rows[r].weight = row["weight"].as_u64().unwrap() as u32;
+        card.rows[r].tier = row["tier"].as_u64().unwrap() as u8;
         for (t, a) in row["amounts"].as_array().unwrap().iter().enumerate() {
             card.rows[r].amounts[t] = a.as_u64().unwrap();
         }

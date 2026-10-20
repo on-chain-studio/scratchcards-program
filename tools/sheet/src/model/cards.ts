@@ -11,8 +11,8 @@ function prizes(amounts: Record<string, number>): Pick<Card, 'tokens' | 'prizes'
   const tokens = [...new Set([...Object.keys(amounts), 'SOL'])]
   const base = tokens.map(t => amounts[t] ?? 1_000_000)
   const weights = normalize([70, 20, 9, 1])
-  const rows: PrizeRow[] = [1, 8, 64].map((f, r) => ({ weight: weights[r], amounts: base.map(a => a * f) }))
-  rows.push({ weight: weights[3], amounts: tokens.map((t, i) => (t === 'SOL' ? base[i] * 1000 : 0)) })
+  const rows: PrizeRow[] = [1, 8, 64].map((f, r) => ({ weight: weights[r], tier: r, amounts: base.map(a => a * f) }))
+  rows.push({ weight: weights[3], tier: 3, amounts: tokens.map((t, i) => (t === 'SOL' ? base[i] * 1000 : 0)) })
   return { tokens, prizes: rows }
 }
 

@@ -17,7 +17,8 @@ pub use casino_core::rng::{Rng, TOTAL};
 /// Coins a card may pay in. Every prize row prints an amount per coin; a zero amount leaves the coin
 /// out of that row.
 pub const MAX_TOKENS: usize = 12;
-/// Prize tiers, lowest first: low, mid, high, top. Each is drawn in its own frame around the coin.
+/// Prize rows a card may have, cheapest first. Each carries a tier id the apps draw as a frame
+/// around the coin; the engine never reads it.
 pub const PRIZE_ROWS: usize = 4;
 /// What a plate can show: a coin in one tier's frame. `row * MAX_TOKENS + token`.
 pub const MAX_SYMBOLS: usize = PRIZE_ROWS * MAX_TOKENS;
@@ -94,6 +95,7 @@ pub struct CardConfig {
     pub pay_len: u8,
     pub tier_len: u8,
     pub token_len: u8,
+    pub row_len: u8,
     pub blocks: [Block; MAX_BLOCKS],
     pub pays: [Pay; MAX_PAYS],
     pub tiers: [Tier; MAX_TIERS],
@@ -115,6 +117,7 @@ impl Default for CardConfig {
             pay_len: 0,
             tier_len: 0,
             token_len: 0,
+            row_len: 0,
             blocks: [Block::default(); MAX_BLOCKS],
             pays: [Pay::default(); MAX_PAYS],
             tiers: [Tier::default(); MAX_TIERS],
@@ -140,11 +143,14 @@ impl CardConfig {
     pub fn tokens(&self) -> usize {
         (self.token_len as usize).min(MAX_TOKENS)
     }
+    pub fn prize_rows(&self) -> usize {
+        (self.row_len as usize).min(PRIZE_ROWS)
+    }
 
     /// What `symbol` pays, before any multiple; zero when the card doesn't offer it.
     pub fn amount(&self, symbol: u8) -> u64 {
         let (row, token) = (symbol_row(symbol), symbol_token(symbol));
-        if row >= PRIZE_ROWS || token >= self.tokens() {
+        if row >= self.prize_rows() || token >= self.tokens() {
             return 0;
         }
         self.rows[row].amounts[token]
@@ -154,7 +160,7 @@ impl CardConfig {
     pub fn symbols(&self) -> ([u8; MAX_SYMBOLS], usize) {
         let mut out = [0u8; MAX_SYMBOLS];
         let mut n = 0;
-        for row in 0..PRIZE_ROWS {
+        for row in 0..self.prize_rows() {
             for token in 0..self.tokens() {
                 if self.rows[row].amounts[token] > 0 {
                     out[n] = symbol(row, token);
@@ -304,13 +310,14 @@ fn effective_mult(p: &Pay) -> u64 {
 // ── rolling ────────────────────────────────────────────────────────────────────────────────
 
 /// The prize a win pays: a tier by its weight, then one of that tier's coins, each as likely.
+/// A lone tier is always the prize — one `u32` can't hold the whole 2^32, so it isn't drawn.
 /// `None` only for a tier with no coin, which `SetCard` refuses to publish.
 fn draw_prize(card: &CardConfig, rng: &mut Rng) -> Option<u8> {
     let mut w = [0u32; PRIZE_ROWS];
-    for (i, r) in card.rows.iter().enumerate() {
+    for (i, r) in card.rows[..card.prize_rows()].iter().enumerate() {
         w[i] = r.weight;
     }
-    let row = rng.pick(&w)?;
+    let row = if card.prize_rows() == 1 { 0 } else { rng.pick(&w[..card.prize_rows()])? };
     let offered = card.rows[row].amounts[..card.tokens()].iter().filter(|&&a| a > 0).count();
     if offered == 0 {
         return None;
@@ -791,12 +798,14 @@ pub fn parse(b: &[u8]) -> Option<CardConfig> {
         pay_len: b[19],
         tier_len: b[20],
         token_len: b[21],
+        row_len: b[23],
         ..Default::default()
     };
     if c.block_len as usize > MAX_BLOCKS
         || c.pay_len as usize > MAX_PAYS
         || c.tier_len as usize > MAX_TIERS
         || c.token_len as usize > MAX_TOKENS
+        || c.row_len as usize > PRIZE_ROWS
     {
         return None;
     }
@@ -836,7 +845,7 @@ pub fn parse(b: &[u8]) -> Option<CardConfig> {
             break;
         }
     }
-    for r in 0..PRIZE_ROWS {
+    for r in 0..c.prize_rows() {
         let at = ROWS_AT + r * ROW_BYTES;
         c.rows[r].weight = u32le(b, at);
         for t in 0..MAX_TOKENS {
