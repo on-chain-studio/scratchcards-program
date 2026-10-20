@@ -641,8 +641,7 @@ fn render_jackpot(card: &CardConfig, out: &Outcome, rng: &mut Rng, cells: &mut [
 pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, BadCard> {
     let mut out = Winnings { amounts: [0; MAX_TOKENS], jackpot: false, multiplier: 1 };
     let cells = &d.cells;
-    let (syms, sym_len) = card.symbols();
-    if sym_len == 0 {
+    if card.symbols().1 == 0 {
         return Err(BadCard);
     }
 
@@ -684,7 +683,21 @@ pub fn winnings(card: &CardConfig, d: &Deal) -> Result<Winnings, BadCard> {
             if p.min == 0 {
                 continue;
             }
-            for &s in &syms[..sym_len] {
+            // Only a symbol on the line can pay on it, so walk the line's own plates, each symbol
+            // once, rather than every symbol the card offers: the same answer, and the cost no
+            // longer grows with coins x tiers. The order cannot matter: payouts only add up.
+            let mut seen = [false; MAX_SYMBOLS];
+            for i in cells_of(p.scope) {
+                let c = cells[i];
+                if !is_plate(c) || payload(c) as usize >= MAX_SYMBOLS || seen[payload(c) as usize] {
+                    continue;
+                }
+                seen[payload(c) as usize] = true;
+                let s = payload(c) as u8;
+                // a plate the card does not offer never pays
+                if card.amount(s) == 0 {
+                    continue;
+                }
                 if p.flags & MARKED != 0 && !is_marked(card, cells, s) {
                     continue;
                 }
