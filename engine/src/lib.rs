@@ -103,6 +103,9 @@ pub struct CardConfig {
     /// Coin whose mint is SOL, or 0xFFFF if none. A SOL coin renders identically to the jackpot's
     /// SOL mark, so it must never be a jackpot-line filler.
     pub sol_index: u16,
+    /// A v2 card's pool weights, read as its one tier's coin weights. Every v3 card leaves this
+    /// unset: its coins are drawn by equal weights, through the same draw.
+    pub coin_weights: Option<[u32; MAX_TOKENS]>,
 }
 
 impl Default for CardConfig {
@@ -123,6 +126,7 @@ impl Default for CardConfig {
             tiers: [Tier::default(); MAX_TIERS],
             rows: [PrizeRow::default(); PRIZE_ROWS],
             sol_index: 0xFFFF,
+            coin_weights: None,
         }
     }
 }
@@ -309,8 +313,10 @@ fn effective_mult(p: &Pay) -> u64 {
 
 // ── rolling ────────────────────────────────────────────────────────────────────────────────
 
-/// The prize a win pays: a tier by its weight, then one of that tier's coins, each as likely.
-/// A lone tier is always the prize — one `u32` can't hold the whole 2^32, so it isn't drawn.
+/// The prize a win pays: a tier by its weight, then one of that tier's coins by weight. A v3
+/// card weighs every offered coin the same; a v2 card read as one tier keeps its pool weights,
+/// and the same single weighted draw it always made, so it deals exactly as it did.
+/// A lone tier, and a lone coin, is not drawn: one `u32` can't hold the whole 2^32.
 /// `None` only for a tier with no coin, which `SetCard` refuses to publish.
 fn draw_prize(card: &CardConfig, rng: &mut Rng) -> Option<u8> {
     let mut w = [0u32; PRIZE_ROWS];
@@ -318,13 +324,35 @@ fn draw_prize(card: &CardConfig, rng: &mut Rng) -> Option<u8> {
         w[i] = r.weight;
     }
     let row = if card.prize_rows() == 1 { 0 } else { rng.pick(&w[..card.prize_rows()])? };
-    let offered = card.rows[row].amounts[..card.tokens()].iter().filter(|&&a| a > 0).count();
-    if offered == 0 {
+    let weights = card.coin_weights.unwrap_or_else(|| equal_weights(&card.rows[row], card.tokens()));
+    let offered = (0..card.tokens()).filter(|&t| card.rows[row].amounts[t] > 0 && weights[t] > 0).count();
+    let token = match offered {
+        0 => return None,
+        1 => (0..card.tokens()).find(|&t| card.rows[row].amounts[t] > 0 && weights[t] > 0)?,
+        _ => rng.pick(&weights[..card.tokens()])?,
+    };
+    if card.rows[row].amounts[token] == 0 {
         return None;
     }
-    let k = rng.below(offered as u64) as usize;
-    let token = (0..card.tokens()).filter(|&t| card.rows[row].amounts[t] > 0).nth(k)?;
     Some(symbol(row, token))
+}
+
+/// 2^32 split as evenly as a `u32` table can over the coins a tier offers: the first coins take
+/// the remainder, one unit each. A lone coin gets nothing — it is never drawn.
+fn equal_weights(row: &PrizeRow, tokens: usize) -> [u32; MAX_TOKENS] {
+    let mut out = [0u32; MAX_TOKENS];
+    let n = row.amounts[..tokens].iter().filter(|&&a| a > 0).count() as u64;
+    if n < 2 {
+        return out;
+    }
+    let (base, mut extra) = (TOTAL / n, TOTAL % n);
+    for t in 0..tokens {
+        if row.amounts[t] > 0 {
+            out[t] = (base + if extra > 0 { 1 } else { 0 }) as u32;
+            extra = extra.saturating_sub(1);
+        }
+    }
+    out
 }
 
 /// Draws what the card pays from the published weights, before any cell exists.
@@ -868,6 +896,43 @@ pub fn parse(b: &[u8]) -> Option<CardConfig> {
     Some(c)
 }
 
+/// Bytes one card occupied in a v2 shelf, before prize tiers.
+pub const CARD_BYTES_V2: usize = 992;
+
+/// Reads a v2 card — one pool of coins, each with an amount and a draw weight — as a v3 card
+/// with one tier whose coin weights are the pool's. It deals and values exactly as v2 did.
+pub fn parse_v2(b: &[u8]) -> Option<CardConfig> {
+    if b.len() < CARD_BYTES_V2 {
+        return None;
+    }
+    let pool_len = b[21];
+    if pool_len as usize > MAX_POOL_V2 {
+        return None;
+    }
+    // everything before the pool sits where v3 keeps it
+    let mut head = [0u8; CARD_BYTES];
+    head[..512].copy_from_slice(&b[..512]);
+    head[21] = pool_len;
+    head[22] = 0;
+    head[23] = 1;
+    let mut c = parse(&head)?;
+    // the blank v3 coin table reads every coin as SOL; v2 says which one is, below
+    c.sol_index = 0xFFFF;
+    let mut weights = [0u32; MAX_TOKENS];
+    for i in 0..pool_len as usize {
+        let at = 512 + i * 48;
+        c.rows[0].amounts[i] = u64le(b, at + 32);
+        weights[i] = u32le(b, at + 40);
+        if c.sol_index == 0xFFFF && b[at..at + 32].iter().all(|&x| x == 0) {
+            c.sol_index = i as u16;
+        }
+    }
+    c.coin_weights = Some(weights);
+    Some(c)
+}
+
+const MAX_POOL_V2: usize = 10;
+
 /// Shared in/out buffer — no allocator here, so the host writes and reads the result in place.
 ///
 /// In:  `CARD_BYTES` of card, exactly as the account stores it, then the 32-byte seed.
@@ -895,11 +960,24 @@ mod wasm_abi {
     pub extern "C" fn deal_buffer() -> i32 {
         let buf = unsafe { &mut *core::ptr::addr_of_mut!(BUF) };
         let Some(card) = parse(&buf[..CARD_BYTES]) else { return -1 };
+        deal_into(buf, &card)
+    }
+
+    /// The same, for a card from a v2 shelf: its `CARD_BYTES_V2` at the start of the buffer, the
+    /// seed where it always sits.
+    #[no_mangle]
+    pub extern "C" fn deal_buffer_v2() -> i32 {
+        let buf = unsafe { &mut *core::ptr::addr_of_mut!(BUF) };
+        let Some(card) = parse_v2(&buf[..CARD_BYTES_V2]) else { return -1 };
+        deal_into(buf, &card)
+    }
+
+    fn deal_into(buf: &mut [u8; BUF_LEN], card: &CardConfig) -> i32 {
         let mut seed = [0u8; 32];
         seed.copy_from_slice(&buf[CARD_BYTES..CARD_BYTES + 32]);
 
-        let Ok(d) = deal(&card, &seed) else { return -1 };
-        let Ok(w) = winnings(&card, &d) else { return -1 };
+        let Ok(d) = deal(card, &seed) else { return -1 };
+        let Ok(w) = winnings(card, &d) else { return -1 };
 
         buf[0..2].copy_from_slice(&(d.len as u16).to_le_bytes());
         buf[2..4].copy_from_slice(&(d.body_len as u16).to_le_bytes());
