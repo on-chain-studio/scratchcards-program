@@ -284,6 +284,26 @@ pub fn expected(set: &SetCard) -> CardConfig {
     card
 }
 
+/// A v2 shelf card in the v3 shape, for reading: its pool as one coin tier, the mints and amounts
+/// where v2 kept them. Its coin weights are not carried — the program draws them from the v2
+/// bytes themselves — so a coin v2 never drew still counts here, which only errs toward a bigger
+/// float.
+pub fn v2_as_v3(b: &[u8]) -> CardConfig {
+    let mut head = [0u8; CARD_SIZE];
+    head[..512].copy_from_slice(&b[..512]);
+    let mut card: CardConfig = *bytemuck::from_bytes(&head);
+    let pool = (b[21] as usize).min(MAX_TOKENS);
+    card.token_len = pool as u8;
+    card.kind = 0;
+    card.row_len = 1;
+    for i in 0..pool {
+        let at = 512 + i * 48;
+        card.tokens[i].copy_from_slice(&b[at..at + 32]);
+        card.rows[0].amounts[i] = u64::from_le_bytes(b[at + 32..at + 40].try_into().unwrap());
+    }
+    card
+}
+
 /// Every field of a card on the chain that differs from the one wanted — every one, not a chosen
 /// few: a verifier that only checks the fields someone thought to list gives its most convincing
 /// answer exactly when it is wrong.

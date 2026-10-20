@@ -225,6 +225,13 @@ fn built(result: solarium_client::result::Result<Instruction>) -> Result<Instruc
 /// The config's header and every slot it has room for.
 async fn shelf(chain: &Chain) -> Result<(u64, Vec<CardConfig>)> {
     let account = chain.account(&config()).await?.context("no config on chain — run `setup`")?;
+    // A shelf not yet re-stamped holds v2 cards: shown as the one tier the program deals them as.
+    let header: casino_core::shelf::Header = casino_ops::decode(&account.data).context("the config is not a shelf")?;
+    if header.version == scratch_cards::state::config::VERSION_V2 {
+        let size = scratch_cards::state::config::CARD_SIZE_V2;
+        let items = account.data[scratch_cards::state::config::Config::HEADER..].chunks_exact(size).map(sheet::v2_as_v3).collect();
+        return Ok((header.count, items));
+    }
     let (header, items) = casino_ops::shelf::<CardConfig>(&account.data).context("the config is not a shelf")?;
     Ok((header.count, items))
 }
@@ -789,6 +796,28 @@ mod tests {
                 assert_eq!(paid, vec![sol], "{}", card.id);
             }
         }
+    }
+
+    /// The live mainnet shelf, still v2, reads as one-tier cards with its own coins and amounts —
+    /// what `cards`, `verify` and the float sizing see until it is re-stamped.
+    #[test]
+    fn a_v2_shelf_reads_as_one_tier_cards() {
+        let shelf: &[u8] = include_bytes!("../../tests/fixtures/mainnet_shelf_v2.bin");
+        let count = u64::from_le_bytes(shelf[48..56].try_into().unwrap()) as usize;
+        let size = scratch_cards::state::config::CARD_SIZE_V2;
+        for i in 0..count {
+            let b = &shelf[56 + i * size..56 + (i + 1) * size];
+            let card = sheet::v2_as_v3(b);
+            assert_eq!(card.price_lamports, u64::from_le_bytes(b[..8].try_into().unwrap()));
+            assert_eq!(card.row_len, 1);
+            assert_eq!(card.token_len, b[21]);
+            for c in 0..b[21] as usize {
+                assert_eq!(card.tokens[c], b[512 + c * 48..544 + c * 48]);
+                assert!(card.rows[0].amounts[c] > 0);
+            }
+        }
+        let cards: Vec<_> = (0..count).map(|i| sheet::v2_as_v3(&shelf[56 + i * size..56 + (i + 1) * size])).collect();
+        assert!(!sheet::worst_cases(&cards, &Mints::default()).is_empty());
     }
 
     #[test]
