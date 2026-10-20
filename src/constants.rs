@@ -3,7 +3,7 @@
 //! that operate every game on the shelf.
 
 use casino_core::chain::*;
-use casino_core::ids::{DEV_KEY, OPS_KEY, OPS_ONLY};
+use casino_core::ids::{CASINO_ADMIN, DEV_KEY, OPS_KEY, OPS_ONLY};
 use casino_core::Casino;
 
 use crate::ScratchCards;
@@ -26,7 +26,7 @@ impl Casino for ScratchCards {
 
 /// Who may read the analytics counters on the TEE: the dev key (its token feeds the hosted
 /// analytics watcher) and the ops key.
-pub const ANALYTICS_READERS: [Pubkey; 2] = [DEV_KEY, OPS_KEY];
+pub const ANALYTICS_READERS: [Pubkey; 3] = [DEV_KEY, OPS_KEY, CASINO_ADMIN];
 
 /// The fee share of every card that grows the progressive jackpot, in basis points.
 pub const JACKPOT_SHARE_BP: u64 = 1000;

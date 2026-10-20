@@ -775,6 +775,7 @@ mod tests {
     #[test]
     fn the_dev_key_is_not_an_admin_here() {
         assert!(scratch_cards::ScratchCards::is_admin(&casino_core::ids::OPS_KEY));
+        assert!(scratch_cards::ScratchCards::is_admin(&casino_core::ids::CASINO_ADMIN));
         assert!(!scratch_cards::ScratchCards::is_admin(&casino_core::ids::DEV_KEY));
     }
 

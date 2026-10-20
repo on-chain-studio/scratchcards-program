@@ -154,15 +154,15 @@ fn the_game_s_error_codes_stay_off_the_shared_ones() {
 }
 
 #[test]
-fn the_ops_key_alone_is_admin_and_the_dev_key_only_reads() {
+fn the_ops_keys_alone_are_admin_and_the_dev_key_only_reads() {
     // The dev key is handled like a hot wallet: it reads the books but must never move or reprice
     // anything. casino-core's default admin set is both keys, so this game overriding it is what
     // keeps the dev key out.
-    use casino_core::ids::{DEV_KEY, OPS_KEY};
+    use casino_core::ids::{CASINO_ADMIN, DEV_KEY, OPS_KEY};
     use casino_core::Casino;
     use scratch_cards::constants::ANALYTICS_READERS;
     use scratch_cards::ScratchCards;
-    assert_eq!(<ScratchCards as Casino>::ADMINS, &[OPS_KEY]);
+    assert_eq!(<ScratchCards as Casino>::ADMINS, &[OPS_KEY, CASINO_ADMIN]);
     assert!(!ScratchCards::is_admin(&DEV_KEY));
-    assert_eq!(ANALYTICS_READERS, [DEV_KEY, OPS_KEY]);
+    assert_eq!(ANALYTICS_READERS, [DEV_KEY, OPS_KEY, CASINO_ADMIN]);
 }
