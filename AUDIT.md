@@ -55,9 +55,12 @@ Scope: `scratch-cards-program/src` (all instructions, state, utils), `engine/src
 > on sale at misread prices (now the program empties a shelf it re-stamps, tested on the live
 > bytes; `SetCardCount` is gone); `publish`/`verify` on an un-restamped shelf cut a live slot before failing (now refused
 > with the remedy); the app's "WIN UP TO" on the live v2 shelf headlined the cheapest coin (now
-> the rarest-weighted). Not covered by any test here: a returning mainnet player's first purchase
-> after the restamp resizes a 1096-byte card to 1416 in place (one Magic CPI; it was close-then-
-> create on one address, which nothing local can run).
+> the rarest-weighted). A returning mainnet player's first purchase after the restamp resizes
+> their 1096-byte card to 1416 in place (one Magic CPI; it was close-then-create on one address).
+> Nothing local can run that CPI, so it was driven on the devnet TEE with a `devnet-debug` build:
+> `FabricateCard` (33) wrote a collected v2 ticket from the live mainnet slot 0's bytes, and a
+> buy-reveal-collect over it left the card at 1416 bytes, terms carried, paid out. The feature is
+> off in every deployable build, where 33 is refused.
 
 Each item below is self-contained — location, what breaks, and what to do — so they can be
 taken in any order. Severity order is the recommended order.

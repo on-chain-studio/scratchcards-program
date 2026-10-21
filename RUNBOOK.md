@@ -119,8 +119,18 @@ The emptying is the program's own rule, not the CLI's: `Initialize` on a shelf s
 another layout sets its count to 0 in the same instruction, so no slot is ever sold or valued
 at the wrong stride, whatever is sent around it. `publish` and `verify` refuse a shelf at
 another layout and say to re-stamp first. Tickets bought before the restamp still collect
-under the terms they carry. Re-stamp mainnet only once the app that reads the new layout has
-shipped.
+under the terms they carry, and a returning player's first purchase resizes their card to the
+new layout in place (exercised on the devnet TEE, see AUDIT.md). Re-stamp mainnet only once
+the app that reads the new layout has shipped.
+
+### Driving a path no purchase reaches
+
+`cargo build-sbf -- --features devnet-debug` adds `FabricateCard` (33): admin-only, devnet
+only, it writes a player's card account from given bytes; `scratch-ops fabricate-v2-card`
+writes a collected v2 ticket. Every build without the feature refuses 33, so never deploy a
+debug build to mainnet, and redeploy devnet without it afterwards. A card is private to its
+player on the TEE, so the admin's read of it says "none" even while it is there — `close-card`
+sends without reading first for that reason.
 
 ---
 
