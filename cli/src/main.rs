@@ -668,22 +668,20 @@ async fn main() -> Result<()> {
             let user = player.map(|p| key(&p)).transpose()?.unwrap_or(admin);
             let rollup = chain.rollup().await?;
             let Some(account) = rollup.account(&card_of(&user)).await? else {
-                println!("no card for {user}");
+                println!("no card for {user} at {}", card_of(&user));
                 return Ok(());
             };
             let c = casino_ops::decode::<Card>(&account.data).filter(|c| c.discriminator == card::DISCRIMINATOR).context("not a card")?;
             println!("card {}  of {}  ({} bytes)", card_of(&user), Pubkey::new_from_array(c.user), account.data.len());
-            println!("  card {}  status {}  terms {}", c.card_id, play::status(c.status), if account.data.len() >= Card::WITH_TERMS { "carried" } else { "the shelf's" });
+            println!("  card {}  status {}  terms {}", c.card_id, play::status(c.status), if Card::is_card_size(account.data.len()) { "carried" } else { "the shelf's" });
             Ok(())
         }
         Command::CloseCard { player } => {
             require_admin(&chain)?;
             let user = player.map(|p| key(&p)).transpose()?.unwrap_or(admin);
             let rollup = chain.rollup().await?;
-            if rollup.account(&card_of(&user)).await?.is_none() {
-                println!("⏭  no card for {user}");
-                return Ok(());
-            }
+            // No read first: a player's card is private to them on the TEE, so the admin's read
+            // says "none" for a card that is there. The program answers on the account itself.
             let ix = built(generated::ScratchCards::close_card_instruction(admin, house(), card_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, CloseCard { user }))?;
             rollup.send(&[ix], &[&chain.admin]).await?;
             let gone = rollup.account(&card_of(&user)).await?.is_none();
