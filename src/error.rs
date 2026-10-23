@@ -1,5 +1,5 @@
 //! This game's half of the shared `Custom(n)` space. `casino_core::CoreError` owns 1–3, 5–7 and
-//! 9–11; 4 and 8 are left to each game to name, and 12 up are its own (none yet).
+//! 9–11; 4 and 8 are left to each game to name, and 12 up are its own.
 
 use casino_core::chain::*;
 
@@ -10,6 +10,8 @@ pub enum GameError {
     InvalidCard        = 4,
     /// The card's seed has not landed yet.
     NotRevealed        = 8,
+    /// `HasPlayed`'s "no": the wallet has never bought a card.
+    NotPlayed          = 12,
 }
 
 impl From<GameError> for ProgramError {

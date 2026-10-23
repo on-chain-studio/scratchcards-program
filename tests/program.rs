@@ -162,7 +162,7 @@ fn retired_numbers_are_no_ops_too() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_past_the_list_are_invalid_data() {
     let table = Table::new();
-    for retired in [34u64, 35, 255, 1 << 40] {
+    for retired in [35u64, 36, 255, 1 << 40] {
         let mut instruction = table.reveal(vrf_identity(), &[]);
         instruction.data[..8].copy_from_slice(&retired.to_le_bytes());
         let result = mollusk().process_instruction(
@@ -256,4 +256,59 @@ fn fabricate_card_is_a_devnet_debug_build_s_alone() {
     } else {
         assert_eq!(result.raw_result, Err(InstructionError::InvalidInstructionData));
     }
+}
+
+// HasPlayed (34): MagicBlock Quests' lookup. The quest verifier key alone gets an answer — success
+// or NotPlayed; everyone else gets the same refusal whether the card exists or not.
+
+fn verifier() -> Pubkey {
+    key(scratch_cards::constants::QUEST_VERIFIER.to_bytes())
+}
+
+fn has_played(signer: Pubkey, signs: bool, card: Pubkey, wallet: Pubkey) -> Instruction {
+    Instruction::new_with_bytes(
+        program(),
+        &input(34, &wallet.to_bytes()),
+        vec![AccountMeta::new_readonly(signer, signs), AccountMeta::new_readonly(card, false)],
+    )
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_verifier_learns_whether_a_wallet_has_a_card() {
+    let table = Table::new();
+    let ix = has_played(verifier(), true, table.card, table.user);
+    let played = mollusk().process_instruction(&ix, &[(verifier(), wallet()), (table.card, table.card_account(CardStatus::Collected))]);
+    assert_eq!(played.raw_result, Ok(()));
+    println!("has_played, a card: {} CU", played.compute_units_consumed);
+
+    let none = mollusk().process_instruction(&ix, &[(verifier(), wallet()), (table.card, Account::default())]);
+    assert_eq!(none.raw_result, Err(InstructionError::Custom(scratch_cards::error::GameError::NotPlayed as u32)));
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn anyone_else_is_refused_the_same_way_card_or_not() {
+    let table = Table::new();
+    let stranger = Pubkey::new_unique();
+    for card in [table.card_account(CardStatus::Collected), Account::default()] {
+        let ix = has_played(stranger, true, table.card, table.user);
+        let result = mollusk().process_instruction(&ix, &[(stranger, wallet()), (table.card, card.clone())]);
+        assert_eq!(result.raw_result, Err(InstructionError::Custom(CoreError::Unauthorized as u32)));
+
+        // Naming the verifier without its signature is no better.
+        let claimed = has_played(verifier(), false, table.card, table.user);
+        let result = mollusk().process_instruction(&claimed, &[(verifier(), wallet()), (table.card, card)]);
+        assert_eq!(result.raw_result, Err(InstructionError::MissingRequiredSignature));
+    }
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_card_must_be_the_wallet_s_own() {
+    let table = Table::new();
+    let other = Table::new();
+    let ix = has_played(verifier(), true, other.card, table.user);
+    let result = mollusk().process_instruction(&ix, &[(verifier(), wallet()), (other.card, other.card_account(CardStatus::Collected))]);
+    assert_eq!(result.raw_result, Err(InstructionError::Custom(CoreError::InvalidPDA as u32)));
 }

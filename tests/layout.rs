@@ -85,7 +85,7 @@ mod wire {
                 "{retired} is not the no-op"
             );
         }
-        for past in [33, 255] {
+        for past in [35, 255] {
             assert!(ScratchCards::instruction(&input(past, &[])).is_err(), "{past} was answered");
         }
         assert!(ScratchCards::instruction(&[24, 0, 0, 0]).is_err(), "a short tag was answered");

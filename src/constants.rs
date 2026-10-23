@@ -28,5 +28,9 @@ impl Casino for ScratchCards {
 /// analytics watcher) and the ops key.
 pub const ANALYTICS_READERS: [Pubkey; 3] = [DEV_KEY, OPS_KEY, CASINO_ADMIN];
 
+/// The key MagicBlock Quests' lookup signs `HasPlayed` with. It holds nothing and signs only
+/// simulations; whoever has it learns whether a wallet has bought a card, and nothing else.
+pub const QUEST_VERIFIER: Pubkey = Pubkey::from_str_const("4cd9zCgws9FKUmkLudUnyXzszc5zh71i1LFRerWkwcVr");
+
 /// The fee share of every card that grows the progressive jackpot, in basis points.
 pub const JACKPOT_SHARE_BP: u64 = 1000;
