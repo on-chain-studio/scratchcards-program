@@ -14,8 +14,6 @@ pub enum GameError {
     NotPlayed          = 12,
     /// The card's player is owed referral earnings: claim them before the card is closed.
     StillOwed          = 13,
-    /// The referrer's ledger is closed or on another rollup, so a payout here could not land.
-    LedgerElsewhere    = 14,
 }
 
 impl From<GameError> for ProgramError {

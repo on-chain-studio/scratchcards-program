@@ -509,11 +509,10 @@ impl ScratchCards {
         card: &Account<'a>,
         magic_context: &mut Account<'a>,
         magic_program: &Account<'a>,
-        player_ledger: &Account<'a>,
     ) -> Result<()> {
         Ok(claim_referral::ClaimReferral.process(
             claimer.info.as_view(), user.info.as_view(), house.info.as_view(), card.info.as_view(),
-            magic_context.info.as_view(), magic_program.info.as_view(), player_ledger.info.as_view(),
+            magic_context.info.as_view(), magic_program.info.as_view(),
         )?)
     }
 
