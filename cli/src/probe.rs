@@ -162,7 +162,7 @@ pub async fn probe_push(chain: &Chain, wallet: &Keypair) -> Result<()> {
 
     let run = async {
         println!("{} playing one card", at());
-        let played = crate::play::play(chain, wallet, 1, 0, false).await;
+        let played = crate::play::play(chain, wallet, 1, 0, false, None).await;
         println!("{} play finished ({}) — listening 10s more for stragglers", at(), if played.is_ok() { "ok" } else { "failed" });
         tokio::time::sleep(Duration::from_secs(10)).await;
         played

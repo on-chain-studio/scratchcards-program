@@ -12,6 +12,7 @@
 //! scratch-ops play [cards]            buy, reveal and collect real cards
 //! scratch-ops close-stray-cards [--go] drop cards of a layout the program no longer reads
 //! scratch-ops analytics [--json] [--watch] | fetch-prices | status | cards
+//! scratch-ops referral [player] | claim-referral <wallet> | grow-analytics
 //! ```
 //!
 //! Devnet unless `--mainnet`; the TEE unless `--public`; the admin key is `--keypair`,
@@ -37,7 +38,10 @@ use casino_ops::ops::Setup;
 use casino_ops::vault::SYSTEM_PROGRAM;
 use casino_ops::{keys, lamports, short, sol, AdminCommand, Chain, Game, Instruction, Keypair, Net, Ops, Player, Pubkey, Signer};
 use clap::{Parser, Subcommand};
+use casino_core::referral::{self, Referral};
+use casino_ops::magicblock::MAGIC_CONTEXT;
 use scratch_cards::instructions::{close_card::CloseCard, initialize::Initialize};
+use scratch_cards::GrowAnalytics;
 use scratch_cards::state::analytics::{self as analytics_state, Analytics};
 use scratch_cards::state::card::{self, Card};
 use scratch_cards::state::config::CardConfig;
@@ -135,6 +139,14 @@ enum Command {
     },
     /// The cards as published.
     Cards,
+    /// A player's referral section — who referred them, what they are owed and have earned as a
+    /// referrer — and the program's referral counters. The admin's by default.
+    Referral { player: Option<String> },
+    /// Asks the house to pay what this wallet is owed as a referrer into its ledger; the wallet signs.
+    ClaimReferral { wallet: PathBuf },
+    /// Admin, basenet: grows the analytics account to hold the referral counters. Undelegate it
+    /// first (`admin undelegate-pda analytics`) and delegate it again after (`admin delegate-pda analytics`).
+    GrowAnalytics,
     /// The lifetime counters, live off the rollup when delegated (the admins are members there).
     Analytics {
         /// Machine-readable, for the sheet tool: one JSON object and nothing else.
@@ -201,6 +213,9 @@ enum Command {
         /// Play as this keypair rather than the admin.
         #[arg(long)]
         wallet: Option<PathBuf>,
+        /// Name this wallet as the referrer: locked only if the purchase creates the player's card.
+        #[arg(long)]
+        referrer: Option<Pubkey>,
     },
     /// Lists the vault ledgers on basenet, or watches one — a wallet's, or a ledger itself — and
     /// timestamps every change and every change of hands.
@@ -600,6 +615,68 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Analytics { json, watch } => show_analytics(&chain, json, watch).await,
+        Command::Referral { player } => {
+            let user = player.map(|p| key(&p)).transpose()?.unwrap_or(chain.admin.pubkey());
+            let rollup = chain.rollup().await?;
+            match rollup.account(&card_of(&user)).await? {
+                None => println!("no card for {user}"),
+                Some(account) => {
+                    let at = match account.data.len() {
+                        Card::REFERRED_SIZE => Some(Card::PERSISTENT_SIZE),
+                        Card::REFERRED_SIZE_V2 => Some(Card::PERSISTENT_SIZE_V2),
+                        _ => None,
+                    };
+                    match at.and_then(|at| Referral::read(&account.data, at)) {
+                        Some(r) => {
+                            match r.referrer() {
+                                Some(by) => println!("{user}  referred by {by} since {}", r.since),
+                                None => println!("{user}  not referred"),
+                            }
+                            println!("  as a referrer: owed {} SOL, earned {} SOL", sol(r.owed), sol(r.earned));
+                        }
+                        None => println!("the card of {user} is from before referrals: its next purchase adds the section"),
+                    }
+                }
+            }
+            let live = chain.live(&analytics(), &chain.admin).await?;
+            match live.account.and_then(|a| referral::counters(&mut a.data.clone(), Analytics::SIZE).copied()) {
+                Some(c) => {
+                    println!("
+referred {} players  ·  unreferred {}", c.players_referred, c.players_unreferred);
+                    println!("referrers owed {} SOL  ·  earned {} SOL", sol(c.owed), sol(c.earned));
+                }
+                None => println!("
+referrals not counted yet — run `grow-analytics`"),
+            }
+            Ok(())
+        }
+        Command::ClaimReferral { wallet: path } => {
+            let wallet = keys::read(&path)?;
+            let player = Player::new(&chain, &wallet, scratch_cards::ID);
+            let user = wallet.pubkey();
+            let at = player.rollup().await?;
+            let ix = built(generated::ScratchCards::claim_referral_instruction(user, user, house(), card_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
+            at.send(&[ix], &[&wallet]).await?;
+            println!("✅ claimed: the house's task pays {user} what it is owed");
+            Ok(())
+        }
+        Command::GrowAnalytics => {
+            require_admin(&chain)?;
+            let account = chain.base.account(&analytics()).await?.context("no analytics account — run `setup`")?;
+            if account.owner != scratch_cards::ID {
+                bail!("analytics is delegated — run `admin undelegate-pda analytics` first");
+            }
+            if account.data.len() >= Analytics::REFERRALS_SIZE {
+                println!("⏭  analytics already holds the referral counters ({} bytes)", account.data.len());
+                return Ok(());
+            }
+            let ix = built(generated::ScratchCards::grow_analytics_instruction(
+                chain.admin.pubkey(), analytics(), SYSTEM_PROGRAM, GrowAnalytics { len: Analytics::REFERRALS_SIZE as u32 },
+            ))?;
+            chain.base.send(&[ix], &[&chain.admin]).await?;
+            println!("✅ analytics grown {} → {} bytes — now `admin delegate-pda analytics`", account.data.len(), Analytics::REFERRALS_SIZE);
+            Ok(())
+        }
         Command::Balances => float::balances(&chain).await,
         Command::TopUp { factor, fill, check } => float::top_up(&chain, factor, fill, check).await,
         Command::AcquireFloat { factor, slippage, swap } => float::acquire_float(&chain, factor, slippage, swap).await,
@@ -643,9 +720,9 @@ async fn main() -> Result<()> {
             println!("withdrew {} SOL, closed the ledger and its permission; the wallet got back {} SOL", sol(withdrawn), sol(after.saturating_sub(before)));
             Ok(())
         }
-        Command::Play { cards, card, close, wallet: path } => {
+        Command::Play { cards, card, close, wallet: path, referrer } => {
             let wallet = wallet(&chain, path)?;
-            play::play(&chain, &wallet, cards, card, close).await
+            play::play(&chain, &wallet, cards, card, close, referrer).await
         }
         Command::WatchLedger { who } => probe::watch_ledger(&chain, who).await,
         Command::ProbePush { wallet: path } => {
@@ -658,7 +735,7 @@ async fn main() -> Result<()> {
             // The session key the card was bought with is gone with its run; this one consents to
             // the collect, so it has to be authorized like any other.
             player.ready(0, |m| println!("  {m}")).await?;
-            let table = play::Table { player: &player, at: player.rollup().await? };
+            let table = play::Table { player: &player, at: player.rollup().await?, referrer: None };
             if !table.finish().await? {
                 println!("no card to finish");
             }

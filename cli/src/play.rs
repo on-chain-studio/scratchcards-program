@@ -4,6 +4,7 @@
 //! Buying and revealing are separate transactions on purpose: the reveal is permissionless and
 //! retryable, so a VRF request that fails cannot unwind a purchase that is already paid for.
 
+use casino_core::referral::Referrer;
 use anyhow::{bail, Result};
 use casino_core::ids::{PERMISSION_PROGRAM, VAULT_PROGRAM, VRF_PROGRAM};
 use casino_core::permission;
@@ -26,6 +27,8 @@ fn built(result: solarium_client::result::Result<Instruction>) -> Result<Instruc
 pub struct Table<'p, 'c> {
     pub player: &'p Player<'c>,
     pub at: Endpoint,
+    /// Who referred the player: locked only if this run's first purchase creates the card.
+    pub referrer: Option<Pubkey>,
 }
 
 impl Table<'_, '_> {
@@ -47,11 +50,14 @@ impl Table<'_, '_> {
         let (user, session) = (self.user(), self.player.session.pubkey());
         let request = built(generated::ScratchCards::request_purchase_instruction(
             session, user, config(), house(), self.player.receipt(), EPHEMERAL_VAULT, MAGIC_PROGRAM, VAULT_PROGRAM,
-            jackpot(), Treasury::house::<ScratchCards>().ledger, MAGIC_CONTEXT, RequestPurchase { card_id },
+            jackpot(), Treasury::house::<ScratchCards>().ledger, MAGIC_CONTEXT, RequestPurchase { card_id, referrer: Referrer(self.referrer.map(|r| r.to_bytes())) },
         ))?;
         let resolve = built(generated::ScratchCards::resolve_purchase_instruction(
             self.player.receipt(), vault::authority(), config(), house(), card_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM,
-            analytics(), permission::address(&card_of(&user)), PERMISSION_PROGRAM, ResolvePurchase { human: user, card_id },
+            analytics(), permission::address(&card_of(&user)), PERMISSION_PROGRAM,
+            // For the referrer's credit, which a referred card schedules on every sale.
+            [solarium_client::wire::AccountMeta::new(MAGIC_CONTEXT, false)],
+            ResolvePurchase { human: user, card_id, referrer: Referrer(self.referrer.map(|r| r.to_bytes())) },
         ))?;
         self.player.play(&self.at, &[request, self.player.settle::<ScratchCards>(resolve)]).await?;
         self.player.until("the card", async || Ok(self.card().await?)).await?;
@@ -107,7 +113,7 @@ pub fn status(status: u64) -> &'static str {
     ["bought", "requested", "revealed", "collected"].get(status as usize).copied().unwrap_or("?")
 }
 
-pub async fn play(chain: &Chain, wallet: &Keypair, cards: u32, card_id: u64, close: bool) -> Result<()> {
+pub async fn play(chain: &Chain, wallet: &Keypair, cards: u32, card_id: u64, close: bool, referrer: Option<Pubkey>) -> Result<()> {
     let shelf = crate::cards_on_chain(chain).await?;
     let Some(terms) = shelf.get(card_id as usize) else {
         bail!("card {card_id} is not on the shelf");
@@ -124,7 +130,7 @@ pub async fn play(chain: &Chain, wallet: &Keypair, cards: u32, card_id: u64, clo
     println!("1. the ledger, funded and on the rollup");
     let live = player.ready(price * cards as u64, |m| println!("  ✅ {m}")).await?;
     println!("  ✅ live on the rollup with {} SOL", sol(live));
-    let table = Table { player: &player, at: player.rollup().await? };
+    let table = Table { player: &player, at: player.rollup().await?, referrer };
     let start = player.ledger_at(&table.at).await?;
     table.finish().await?;
 
