@@ -140,8 +140,9 @@ enum Command {
     /// The cards as published.
     Cards,
     /// A player's referral section — who referred them, what they are owed and have earned as a
-    /// referrer — and the program's referral counters. The admin's by default.
-    Referral { player: Option<String> },
+    /// referrer — and the program's referral counters. Read as the player, since a card is private
+    /// to them on the TEE; the admin by default.
+    Referral { wallet: Option<PathBuf> },
     /// Asks the house to pay what this wallet is owed as a referrer into its ledger; the wallet signs.
     ClaimReferral { wallet: PathBuf },
     /// Admin, basenet: grows the analytics account to hold the referral counters. Undelegate it
@@ -615,9 +616,14 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Analytics { json, watch } => show_analytics(&chain, json, watch).await,
-        Command::Referral { player } => {
-            let user = player.map(|p| key(&p)).transpose()?.unwrap_or(chain.admin.pubkey());
-            let rollup = chain.rollup().await?;
+        Command::Referral { wallet: path } => {
+            let wallet = match path { Some(path) => keys::read(&path)?, None => chain.admin.insecure_clone() };
+            let user = wallet.pubkey();
+            let player = Player::new(&chain, &wallet, scratch_cards::ID);
+            let rollup = player.rollup().await?;
+            if let Some(ledger) = player.ledger_at(&rollup).await? {
+                println!("ledger {} lamports", ledger.sol);
+            }
             match rollup.account(&card_of(&user)).await? {
                 None => println!("no card for {user}"),
                 Some(account) => {
@@ -632,7 +638,7 @@ async fn main() -> Result<()> {
                                 Some(by) => println!("{user}  referred by {by} since {}", r.since),
                                 None => println!("{user}  not referred"),
                             }
-                            println!("  as a referrer: owed {} SOL, earned {} SOL", sol(r.owed), sol(r.earned));
+                            println!("  as a referrer: owed {} lamports, earned {} lamports", r.owed, r.earned);
                         }
                         None => println!("the card of {user} is from before referrals: its next purchase adds the section"),
                     }
@@ -643,7 +649,7 @@ async fn main() -> Result<()> {
                 Some(c) => {
                     println!("
 referred {} players  ·  unreferred {}", c.players_referred, c.players_unreferred);
-                    println!("referrers owed {} SOL  ·  earned {} SOL", sol(c.owed), sol(c.earned));
+                    println!("referrers owed {} lamports  ·  earned {} lamports", c.owed, c.earned);
                 }
                 None => println!("
 referrals not counted yet — run `grow-analytics`"),
