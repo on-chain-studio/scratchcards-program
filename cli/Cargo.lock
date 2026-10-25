@@ -754,7 +754,7 @@ dependencies = [
 [[package]]
 name = "casino-core"
 version = "0.1.0"
-source = "git+ssh://git@github.com/on-chain-studio/casino-core.git#bb080f51d63bd11018ef1086b8530d3056b7fce9"
+source = "git+ssh://git@github.com:22/on-chain-studio/casino-core.git?branch=feature%2Freferrals#a221f48a63e6f1bb83950cc69718907078fb7af9"
 dependencies = [
  "borsh",
  "bytemuck",
