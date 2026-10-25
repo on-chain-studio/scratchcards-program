@@ -316,6 +316,31 @@ fn owed_card(player: &Player, owed: u64) -> Account {
     player.card_at(Card::REFERRED_SIZE, 3, Some(section))
 }
 
+fn credit_accounts(ix: &Instruction, card: Account) -> Vec<(Pubkey, Account)> {
+    let k = |i: usize| ix.accounts[i].pubkey;
+    vec![
+        (k(0), wallet()), (k(1), owned(vec![])), (k(2), card), (k(3), books(true)),
+        (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")),
+    ]
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_referrer_s_card_from_before_referrals_is_grown_by_its_first_credit() {
+    let referrer = Player::new();
+    let ix = as_test(referral::credit_instruction(
+        &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.card), &scratch_cards::constants::ANALYTICS,
+        scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL, 1_000,
+    ));
+    let result = with_stand_ins().process_instruction(&ix, &credit_accounts(&ix, referrer.card_at(Card::PERSISTENT_SIZE, 4, None)));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![13], "grown in place");
+    let section = referrer.section_after(&result.resulting_accounts);
+    assert_eq!((section.referrer(), section.owed, section.earned), (None, 1_000, 1_000));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_unreferred: 1, owed: 1_000, earned: 1_000, ..Counters::default() });
+    println!("credit_referral, growing the card: {} CU", result.compute_units_consumed);
+}
+
 #[test]
 #[ignore = "needs cargo build-sbf"]
 fn the_house_s_credit_adds_to_what_the_referrer_is_owed() {
@@ -324,10 +349,7 @@ fn the_house_s_credit_adds_to_what_the_referrer_is_owed() {
         &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.card), &scratch_cards::constants::ANALYTICS,
         scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL, referral::cut(PRICE),
     ));
-    let accounts = |ix: &Instruction| {
-        let k = |i: usize| ix.accounts[i].pubkey;
-        vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_card(&referrer, 50)), (k(3), books(true))]
-    };
+    let accounts = |ix: &Instruction| credit_accounts(ix, owed_card(&referrer, 50));
     let result = with_stand_ins().process_instruction(&ix, &accounts(&ix));
     assert_eq!(result.raw_result, Ok(()));
     let section = referrer.section_after(&result.resulting_accounts);
