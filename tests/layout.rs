@@ -35,6 +35,8 @@ fn a_card_carries_its_terms() {
     // offset, and a card sold before terms existed is exactly this size and must still load.
     assert_eq!(Card::SIZE, 96, "card header moved — the app decodes the snapshot by offset");
     assert_eq!(Card::WITH_TERMS, 96 + CARD_SIZE);
+    assert_eq!(Card::REFERRED_SIZE, Card::PERSISTENT_SIZE + casino_core::referral::SIZE, "the referral section follows the generation");
+    assert_eq!((Card::REFERRED_SIZE, Card::REFERRED_SIZE_V2), (1480, 1160));
 }
 
 /// The little-endian u64 an instruction starts with. Moving one silently repoints every client
@@ -65,6 +67,11 @@ fn wire_numbers_are_pinned() {
     assert_eq!(ix::RESOLVE_COLLECT, 29);
     assert_eq!(ix::UNDELEGATE_TREASURY, 30);
     assert_eq!(ix::UPGRADE_PERMISSIONS, 32);
+    assert_eq!(ix::HAS_PLAYED, 34);
+    assert_eq!(ix::CREDIT_REFERRAL, 35);
+    assert_eq!(ix::CLAIM_REFERRAL, 36);
+    assert_eq!(ix::PAY_REFERRAL, 37);
+    assert_eq!(ix::GROW_ANALYTICS, 38);
 }
 
 mod wire {
@@ -85,7 +92,7 @@ mod wire {
                 "{retired} is not the no-op"
             );
         }
-        for past in [35, 255] {
+        for past in [39, 255] {
             assert!(ScratchCards::instruction(&input(past, &[])).is_err(), "{past} was answered");
         }
         assert!(ScratchCards::instruction(&[24, 0, 0, 0]).is_err(), "a short tag was answered");

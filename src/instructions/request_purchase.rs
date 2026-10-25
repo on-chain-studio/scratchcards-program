@@ -1,5 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::chain::*;
+use casino_core::referral::Referrer;
 use casino_core::{pda, receipt, vault, CoreError};
 
 use crate::constants::JACKPOT_SHARE_BP;
@@ -8,6 +9,8 @@ use crate::state::config;
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestPurchase {
     pub card_id: u64,
+    /// Who referred the player. Locked only if this purchase creates their card; ignored after.
+    pub referrer: Referrer,
 }
 
 
@@ -62,7 +65,7 @@ impl RequestPurchase {
             &[b"house", &[house_bump]],
             &[*user.address(), *house.address(), *jackpot.address()],
             crate::ScratchCardsInstruction::RESOLVE_PURCHASE,
-            &self.card_id.to_le_bytes(),
+            &[&self.card_id.to_le_bytes()[..], self.referrer.bytes()].concat(),
             &movements,
         )
     }

@@ -162,7 +162,7 @@ fn retired_numbers_are_no_ops_too() {
 #[ignore = "needs cargo build-sbf"]
 fn numbers_past_the_list_are_invalid_data() {
     let table = Table::new();
-    for retired in [35u64, 36, 255, 1 << 40] {
+    for retired in [39u64, 40, 255, 1 << 40] {
         let mut instruction = table.reveal(vrf_identity(), &[]);
         instruction.data[..8].copy_from_slice(&retired.to_le_bytes());
         let result = mollusk().process_instruction(

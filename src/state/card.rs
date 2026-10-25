@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use casino_core::chain::*;
+use casino_core::referral::{self, Referral};
 
 use crate::state::config::{CardConfig, Terms, CARD_SIZE_V2};
 
@@ -38,22 +39,46 @@ impl Card {
     pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
     pub const WITH_TERMS_V2: usize = Self::SIZE + CARD_SIZE_V2;
     pub const PERSISTENT_SIZE_V2: usize = Self::WITH_TERMS_V2 + 8;
+    /// With the player's referral section after the generation: what every card is sold at now.
+    /// A card at a smaller size is brought to this one by its next purchase, unreferred.
+    pub const REFERRED_SIZE: usize = Self::PERSISTENT_SIZE + referral::SIZE;
+    pub const REFERRED_SIZE_V2: usize = Self::PERSISTENT_SIZE_V2 + referral::SIZE;
 
     /// The size a card account holding `terms` takes.
     pub fn persistent_size(terms: &Terms) -> usize {
         match terms {
-            Terms::V2(_) => Self::PERSISTENT_SIZE_V2,
-            Terms::V3(_) => Self::PERSISTENT_SIZE,
+            Terms::V2(_) => Self::REFERRED_SIZE_V2,
+            Terms::V3(_) => Self::REFERRED_SIZE,
         }
     }
 
     /// How long the printed terms are, by the account's size; `None` for a card without terms.
     fn terms_len(len: usize) -> Option<usize> {
         match len {
-            Self::WITH_TERMS | Self::PERSISTENT_SIZE => Some(size_of::<CardConfig>()),
-            Self::WITH_TERMS_V2 | Self::PERSISTENT_SIZE_V2 => Some(CARD_SIZE_V2),
+            Self::WITH_TERMS | Self::PERSISTENT_SIZE | Self::REFERRED_SIZE => Some(size_of::<CardConfig>()),
+            Self::WITH_TERMS_V2 | Self::PERSISTENT_SIZE_V2 | Self::REFERRED_SIZE_V2 => Some(CARD_SIZE_V2),
             _ => None,
         }
+    }
+
+    /// Where the referral section sits, on a card at a size that has one.
+    fn referral_at(len: usize) -> Option<usize> {
+        match len {
+            Self::REFERRED_SIZE => Some(Self::PERSISTENT_SIZE),
+            Self::REFERRED_SIZE_V2 => Some(Self::PERSISTENT_SIZE_V2),
+            _ => None,
+        }
+    }
+
+    /// The player's referral section, on a card at the current size.
+    pub fn referral(account: &AccountInfo) -> Option<Referral> {
+        let at = Self::referral_at(account.data_len())?;
+        Referral::read(&account.try_borrow().ok()?, at)
+    }
+
+    pub fn write_referral(account: &AccountInfo, section: &Referral) -> ProgramResult {
+        let at = Self::referral_at(account.data_len()).ok_or(ProgramError::InvalidAccountData)?;
+        section.write(&mut account.try_borrow_mut_data()?, at)
     }
 
     /// Whether an account of this size is a card this program sells.

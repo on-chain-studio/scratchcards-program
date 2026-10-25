@@ -32,5 +32,8 @@ pub const ANALYTICS_READERS: [Pubkey; 3] = [DEV_KEY, OPS_KEY, CASINO_ADMIN];
 /// simulations; whoever has it learns whether a wallet has bought a card, and nothing else.
 pub const QUEST_VERIFIER: Pubkey = Pubkey::from_str_const("4cd9zCgws9FKUmkLudUnyXzszc5zh71i1LFRerWkwcVr");
 
+/// `["analytics"]`, pinned so the referral tasks' instructions need not derive it.
+pub const ANALYTICS: Pubkey = Pubkey::from_str_const("5ycEpU85omRuotGgsLBq92i3pF5R4dKZukArCVYyKjcK");
+
 /// The fee share of every card that grows the progressive jackpot, in basis points.
 pub const JACKPOT_SHARE_BP: u64 = 1000;

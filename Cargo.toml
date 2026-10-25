@@ -51,3 +51,4 @@ mollusk-svm = { git = "https://github.com/anza-xyz/mollusk", rev = "f14a5ffc9f5c
 solana-account = "4"
 solana-instruction = "3"
 solana-pubkey = "4.4"
+solana-program-runtime = { version = "4.3", features = ["agave-unstable-api"] }
