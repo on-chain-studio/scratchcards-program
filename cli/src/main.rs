@@ -766,7 +766,16 @@ referrals not counted yet — run `grow-analytics`"),
             // No read first: a player's card is private to them on the TEE, so the admin's read
             // says "none" for a card that is there. The program answers on the account itself.
             let ix = built(generated::ScratchCards::close_card_instruction(admin, house(), card_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, CloseCard { user }))?;
-            rollup.send(&[ix], &[&chain.admin]).await?;
+            if let Err(e) = rollup.send(&[ix], &[&chain.admin]).await {
+                // What a referrer is owed lives on their card: it is paid out first, then closed.
+                if !format!("{e:#}").contains("Custom(13)") {
+                    return Err(e);
+                }
+                let claim = built(generated::ScratchCards::claim_referral_instruction(admin, user, house(), card_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
+                rollup.send(&[claim], &[&chain.admin]).await?;
+                println!("⏸  {user} is owed referral earnings: claimed — the house's task pays them; run close-card again once it has");
+                return Ok(());
+            }
             let gone = rollup.account(&card_of(&user)).await?.is_none();
             println!("{}", if gone { "✅ closed, its rent back with the house" } else { "⚠ still there" });
             Ok(())

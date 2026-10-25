@@ -416,3 +416,25 @@ fn anyone_may_claim_and_the_house_pays_what_is_owed_once() {
 fn the_analytics_constant_is_its_derivation() {
     assert_eq!(fixed(scratch_cards::constants::ANALYTICS), pda(&[b"analytics"]));
 }
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_card_still_owed_is_not_closed_until_it_is_paid() {
+    let player = Player::new();
+    let mut data = 7u64.to_le_bytes().to_vec();
+    data.extend_from_slice(player.user.as_ref());
+    let ix = Instruction::new_with_bytes(program(), &data, vec![
+        AccountMeta::new_readonly(fixed(casino_core::ids::OPS_KEY), true),
+        AccountMeta::new(pda(&[b"house"]), false),
+        AccountMeta::new(player.card, false),
+        AccountMeta::new(fixed(casino_core::ids::EPHEMERAL_VAULT_ID), false),
+        AccountMeta::new_readonly(magic(), false),
+    ]);
+    let k = |i: usize| ix.accounts[i].pubkey;
+    let accounts = |owed| vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_card(&player, owed)), (k(3), wallet()), (k(4), builtin(magic(), "fake_magic"))];
+    let result = with_stand_ins().process_instruction(&ix, &accounts(700));
+    assert_eq!(result.raw_result, Err(InstructionError::Custom(scratch_cards::error::GameError::StillOwed as u32)));
+    assert!(magic_calls().is_empty());
+    let result = with_stand_ins().process_instruction(&ix, &accounts(0));
+    assert_eq!(result.raw_result, Ok(()));
+}

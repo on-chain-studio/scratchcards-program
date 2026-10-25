@@ -2,10 +2,14 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use casino_core::admin::close_player_account;
 use casino_core::chain::*;
 
+use crate::error::GameError;
+use crate::state::card::Card;
 use crate::ScratchCards;
 
 /// Drops a card and returns its rent to the house. Admin only — a card is paid-for, so closing one
-/// at will would destroy a player's ticket; this is the escape hatch for a stranded card.
+/// at will would destroy a player's ticket; this is the escape hatch for a stranded card. A card
+/// whose player is owed referral earnings is refused until they are paid: what is owed lives on
+/// the card, so closing it would hand the referrer's money to the house.
 /// Accounts: [admin (signer), house, card, ephemeral_vault, magic_program]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CloseCard {
@@ -23,6 +27,9 @@ impl CloseCard {
         ephemeral_vault: &AccountInfo,
         magic_program: &AccountInfo,
     ) -> ProgramResult {
+        if Card::referral(card_account).is_some_and(|r| r.owed > 0) {
+            return Err(GameError::StillOwed.into());
+        }
         close_player_account::<ScratchCards>(b"card", &self.user, admin, house, card_account, ephemeral_vault, magic_program)
     }
 }

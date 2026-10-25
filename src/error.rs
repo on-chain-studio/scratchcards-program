@@ -12,6 +12,8 @@ pub enum GameError {
     NotRevealed        = 8,
     /// `HasPlayed`'s "no": the wallet has never bought a card.
     NotPlayed          = 12,
+    /// The card's player is owed referral earnings: claim them before the card is closed.
+    StillOwed          = 13,
 }
 
 impl From<GameError> for ProgramError {
