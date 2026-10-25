@@ -374,15 +374,23 @@ fn anyone_may_claim_and_the_house_pays_what_is_owed_once() {
         AccountMeta::new_readonly(player.card, false),
         AccountMeta::new(magic_context(), false),
         AccountMeta::new_readonly(magic(), false),
+        AccountMeta::new_readonly(fixed(casino_core::vault::ledger(&core_key(player.user))), false),
     ]);
-    let claim_accounts = |owed| {
+    let ledger = |owner| Account { lamports: SOL, data: vec![1; 160], owner, executable: false, rent_epoch: 0 };
+    let claim_accounts = |owed, ledger: Account| {
         let k = |i: usize| claim.accounts[i].pubkey;
-        vec![(k(0), wallet()), (k(1), wallet()), (k(2), owned(vec![])), (k(3), owed_card(&player, owed)), (k(4), wallet()), (k(5), builtin(magic(), "fake_magic"))]
+        vec![(k(0), wallet()), (k(1), wallet()), (k(2), owned(vec![])), (k(3), owed_card(&player, owed)), (k(4), wallet()), (k(5), builtin(magic(), "fake_magic")), (k(6), ledger)]
     };
-    let result = with_stand_ins().process_instruction(&claim, &claim_accounts(700));
+    let elsewhere = ledger(fixed(casino_core::ids::DELEGATION_PROGRAM_ID));
+    let result = with_stand_ins().process_instruction(&claim, &claim_accounts(700, elsewhere));
+    assert_eq!(result.raw_result, Err(InstructionError::Custom(scratch_cards::error::GameError::LedgerElsewhere as u32)), "on another rollup");
+    assert!(magic_calls().is_empty());
+    let result = with_stand_ins().process_instruction(&claim, &claim_accounts(700, wallet()));
+    assert_eq!(result.raw_result, Err(InstructionError::Custom(scratch_cards::error::GameError::LedgerElsewhere as u32)), "closed");
+    let result = with_stand_ins().process_instruction(&claim, &claim_accounts(700, ledger(vault())));
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(magic_calls(), vec![6]);
-    let result = with_stand_ins().process_instruction(&claim, &claim_accounts(0));
+    let result = with_stand_ins().process_instruction(&claim, &claim_accounts(0, ledger(vault())));
     assert_eq!(result.raw_result, core(casino_core::CoreError::NothingToCollect));
 
     let pay = as_test(referral::pay_instruction(

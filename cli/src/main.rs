@@ -297,6 +297,14 @@ pub async fn cards_on_chain(chain: &Chain) -> Result<Vec<CardConfig>> {
 /// Refuses up front what the program would refuse with a bare `MissingRequiredSignature`: an
 /// admin instruction from a key that is not scratch cards' admin. That is the ops key alone; the
 /// dev key, which casino-ops would otherwise pick up as readily, only reads the books.
+/// Whether a wallet's ledger is delegated, read where that is true: basenet. On the rollup a ledger
+/// delegated there and one still at home both read as the vault's, so the claim cannot tell them
+/// apart, and a payout to one at home would fail.
+async fn ledger_delegated(chain: &Chain, user: &Pubkey) -> Result<bool> {
+    let ledger = casino_core::vault::ledger(user);
+    Ok(chain.base.account(&ledger).await?.is_some_and(|a| a.owner == casino_core::ids::DELEGATION_PROGRAM_ID))
+}
+
 fn require_admin(chain: &Chain) -> Result<()> {
     let admin = chain.admin.pubkey();
     if !scratch_cards::ScratchCards::is_admin(&admin) {
@@ -660,8 +668,13 @@ referrals not counted yet — run `grow-analytics`"),
             let wallet = keys::read(&path)?;
             let player = Player::new(&chain, &wallet, scratch_cards::ID);
             let user = wallet.pubkey();
+            if !ledger_delegated(&chain, &user).await? {
+                bail!("the ledger of {user} is not on a rollup — nothing could be paid into it; bring it there first");
+            }
             let at = player.rollup().await?;
-            let ix = built(generated::ScratchCards::claim_referral_instruction(user, user, house(), card_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
+            let ix = built(generated::ScratchCards::claim_referral_instruction(
+                user, user, house(), card_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM, casino_core::vault::ledger(&user),
+            ))?;
             at.send(&[ix], &[&wallet]).await?;
             println!("✅ claimed: the house's task pays {user} what it is owed");
             Ok(())
@@ -771,7 +784,12 @@ referrals not counted yet — run `grow-analytics`"),
                 if !format!("{e:#}").contains("Custom(13)") {
                     return Err(e);
                 }
-                let claim = built(generated::ScratchCards::claim_referral_instruction(admin, user, house(), card_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM))?;
+                if !ledger_delegated(&chain, &user).await? {
+                    bail!("{user} is owed referral earnings, but their ledger is not on a rollup to pay them into — the card stays");
+                }
+                let claim = built(generated::ScratchCards::claim_referral_instruction(
+                    admin, user, house(), card_of(&user), MAGIC_CONTEXT, MAGIC_PROGRAM, casino_core::vault::ledger(&user),
+                ))?;
                 rollup.send(&[claim], &[&chain.admin]).await?;
                 println!("⏸  {user} is owed referral earnings: claimed — the house's task pays them; run close-card again once it has");
                 return Ok(());
