@@ -214,7 +214,8 @@ enum Command {
         /// Play as this keypair rather than the admin.
         #[arg(long)]
         wallet: Option<PathBuf>,
-        /// Name this wallet as the referrer: locked only if the purchase creates the player's card.
+        /// A referral code: the referrer's player account in any game, as `referral` prints it.
+        /// Read only while the player's card is not linked yet.
         #[arg(long)]
         referrer: Option<Pubkey>,
     },
@@ -635,9 +636,10 @@ async fn main() -> Result<()> {
                     match at.and_then(|at| Referral::read(&account.data, at)) {
                         Some(r) => {
                             match r.referrer() {
-                                Some(by) => println!("{user}  referred by {by} since {}", r.since),
+                                Some(by) => println!("{user}  linked to the card {by} since {}", r.since),
                                 None => println!("{user}  not referred"),
                             }
+                            println!("  referral code: {}", card_of(&user));
                             println!("  as a referrer: owed {} lamports, earned {} lamports", r.owed, r.earned);
                         }
                         None => println!("the card of {user} is from before referrals: its next purchase adds the section"),

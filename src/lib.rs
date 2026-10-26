@@ -36,6 +36,7 @@ pub mod instructions {
     pub mod fabricate_card;
     pub mod has_played;
     pub mod credit_referral;
+    pub mod link_referral;
     pub mod claim_referral;
     pub mod pay_referral;
 }
@@ -491,11 +492,13 @@ impl ScratchCards {
         analytics: &mut Account<'a>,
         ephemeral_vault: &mut Account<'a>,
         magic_program: &Account<'a>,
+        rest: &Remaining<'a>,
         args: credit_referral::CreditReferral,
     ) -> Result<()> {
         Ok(args.process(
             executor.info.as_view(), house.info.as_view(), card.info.as_view(), analytics.info.as_view(),
             ephemeral_vault.info.as_view(), magic_program.info.as_view(),
+            &rest.iter().map(|account| *account.as_view()).collect::<Vec<_>>(),
         )?)
     }
 
@@ -544,5 +547,23 @@ impl ScratchCards {
         args: GrowAnalytics,
     ) -> Result<()> {
         Ok(args.process::<ScratchCards>(admin.info.as_view(), analytics.info.as_view(), system_program.info.as_view())?)
+    }
+
+    /// The house finding the referrer behind a referral code. Only its own task fires it.
+    #[instruction(discriminator = 39)]
+    pub fn link_referral<'a>(
+        &self,
+        executor: &Signer<'a>,
+        house: &mut Account<'a>,
+        code: &Account<'a>,
+        card: &Account<'a>,
+        magic_context: &mut Account<'a>,
+        magic_program: &Account<'a>,
+        args: link_referral::LinkReferral,
+    ) -> Result<()> {
+        Ok(args.process(
+            executor.info.as_view(), house.info.as_view(), code.info.as_view(), card.info.as_view(),
+            magic_context.info.as_view(), magic_program.info.as_view(),
+        )?)
     }
 }

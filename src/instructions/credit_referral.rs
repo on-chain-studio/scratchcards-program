@@ -3,6 +3,7 @@ use casino_core::chain::*;
 use casino_core::magicblock::{resize_ephemeral_account, EPHEMERAL_VAULT_ID};
 use casino_core::referral::{self, Referral};
 use casino_core::{pda, CoreError};
+use pinocchio::sysvars::{clock::Clock, Sysvar};
 
 use crate::constants::ANALYTICS;
 use crate::state::analytics::Analytics;
@@ -14,7 +15,11 @@ use crate::state::card::Card;
 /// A referrer's card from before referrals is grown to the layout here, unreferred, so their
 /// first credits are not lost waiting for their next purchase. A card too old to grow in place,
 /// or gone, is left alone: the house keeps that cut.
-/// Accounts: [executor (signer), house, card (the referrer's), analytics, ephemeral_vault, magic_program]
+///
+/// A credit from a link names the player's card after these, and links it to the referrer's card
+/// only if that exists; a player linked to someone else since is left alone, and so is the cut.
+/// Accounts: [executor (signer), house, card (the referrer's), analytics, ephemeral_vault,
+///            magic_program, player's card?]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CreditReferral {
     pub amount: u64,
@@ -31,6 +36,7 @@ impl CreditReferral {
         analytics_account: &AccountInfo,
         ephemeral_vault: &AccountInfo,
         magic_program: &AccountInfo,
+        rest: &[AccountInfo],
     ) -> ProgramResult {
         let program_id = &crate::ID;
         let house_bump = pda::validate(program_id, house, &[b"house"])?;
@@ -44,6 +50,22 @@ impl CreditReferral {
         let user = Card::load(card_account)?.user;
         pda::validate(program_id, card_account, &[b"card", &user])?;
 
+        if let Some(player) = rest.first() {
+            if player.address() == card_account.address() || !player.owned_by(program_id) {
+                return Ok(());
+            }
+            let owner = Card::load(player)?.user;
+            pda::validate(program_id, player, &[b"card", &owner])?;
+            let Some(mut linked) = Card::referral(player) else { return Ok(()) };
+            if !linked.link(card_account.address(), Clock::get()?.unix_timestamp, Analytics::referrals(analytics_account)) {
+                return Ok(());
+            }
+            Card::write_referral(player, &linked)?;
+            if self.amount == 0 {
+                return Ok(());
+            }
+        }
+
         let mut section = match Card::referral(card_account) {
             Some(section) => section,
             None => {
@@ -54,8 +76,8 @@ impl CreditReferral {
                 };
                 resize_ephemeral_account(house, card_account, ephemeral_vault, magic_program,
                     grown as u32, &[&[b"house", &[house_bump]]])?;
-                referral::count_player(Analytics::referrals(analytics_account), false);
-                Referral::new(None, &user, 0)
+                referral::count_player(Analytics::referrals(analytics_account));
+                Referral::unlinked()
             }
         };
         referral::credit(&mut section, Analytics::referrals(analytics_account), self.amount);

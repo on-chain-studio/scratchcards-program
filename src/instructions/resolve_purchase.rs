@@ -4,7 +4,6 @@ use casino_core::magicblock::{create_ephemeral_account, EPHEMERAL_VAULT_ID, MEMB
 use casino_core::ids::MAGIC_CONTEXT_ID;
 use casino_core::referral::{self, Referral, Referrer};
 use casino_core::{pda, permission, receipt, CoreError};
-use pinocchio::sysvars::{clock::Clock, Sysvar};
 
 use crate::constants::{ANALYTICS, JACKPOT_SHARE_BP, PRIVATE_CASINO};
 use crate::state::analytics::Analytics;
@@ -14,15 +13,16 @@ use crate::state::config;
 /// Turns a settled receipt into a card. The seed comes later via `RequestReveal`, so a failed VRF
 /// request can't unwind a paid purchase.
 ///
-/// A referred player's settle also names the magic context after these: the sale schedules its
-/// referrer's credit from here, so the client never names the referrer's card.
+/// A linked player's settle, or one that names a referral code, also names the magic context
+/// after these: the sale schedules its referrer's credit, or the link, from here, so the client
+/// never names the referrer's card.
 /// Accounts: [receipt, vault_authority (signer), config, house, card, ephemeral_vault,
 ///            magic_program, analytics, card_permission, permission_program, magic_context?]
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct ResolvePurchase {
     pub human: Pubkey,
     pub card_id: u64,
-    /// Who referred the player, if the purchase named anyone. Read only when the card is created.
+    /// The referral code the purchase named, if any: read only while the card is not linked.
     pub referrer: Referrer,
 }
 
@@ -58,7 +58,6 @@ impl ResolvePurchase {
         let card_bump = pda::validate(
             program_id, card_account, &[b"card", self.human.as_ref()],
         )?;
-        let first = card_account.data_len() == 0;
         let kept = Card::referral(card_account);
         let (generation, previous_seed) = if card_account.data_len() == 0 {
             (1, [0; 32])
@@ -88,18 +87,9 @@ impl ResolvePurchase {
         }
         Card::set_generation(card_account, generation)?;
 
-        // The referrer is locked when the card is first made; a card grown to this layout was
-        // made before referrals, and its player stays unreferred.
-        let section = match kept {
-            Some(section) => section,
-            None => Referral::new(
-                if first { self.referrer.0.as_ref() } else { None },
-                &self.human.to_bytes(),
-                Clock::get()?.unix_timestamp,
-            ),
-        };
+        // A card starts unlinked, whether new or grown from before referrals; only a credit links it.
+        let section = kept.unwrap_or_else(Referral::unlinked);
         Card::write_referral(card_account, &section)?;
-        let counted = kept.is_none().then(|| section.referrer().is_some());
 
         {
             let c = Card::load_mut(card_account)?;
@@ -128,19 +118,25 @@ impl ResolvePurchase {
         if let Some(slot) = a.cards_sold.get_mut(card_id as usize) {
             casino_core::analytics::count(slot);
         }
-        if let Some(referred) = counted {
-            referral::count_player(Analytics::referrals(analytics_account), referred);
+        if kept.is_none() {
+            referral::count_player(Analytics::referrals(analytics_account));
         }
 
-        if let Some(referrer) = section.referrer() {
-            let magic_context = rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID)
-                .ok_or(ProgramError::NotEnoughAccountKeys)?;
-            let (account, _) = Pubkey::find_program_address(&[b"card", referrer.as_ref()], program_id);
-            referral::schedule_credit(
-                program_id, house, &[b"house", &[house_bump]], magic_context, magic_program,
+        let amount = referral::cut(price);
+        let house_seeds: &[&[u8]] = &[b"house", &[house_bump]];
+        let magic_context = || rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID).ok_or(ProgramError::NotEnoughAccountKeys);
+        match (section.referrer(), self.referrer.0) {
+            (Some(account), _) if amount > 0 => referral::schedule_credit(
+                program_id, house, house_seeds, magic_context()?, magic_program,
                 card_account.address(), generation, &account, &ANALYTICS,
-                crate::ScratchCardsInstruction::CREDIT_REFERRAL, price,
-            )?;
+                crate::ScratchCardsInstruction::CREDIT_REFERRAL, amount, false,
+            )?,
+            (None, Some(code)) => referral::schedule_link(
+                program_id, house, house_seeds, magic_context()?, magic_program,
+                &Pubkey::new_from_array(code), card_account.address(), generation,
+                crate::ScratchCardsInstruction::LINK_REFERRAL, amount,
+            )?,
+            _ => {}
         }
 
         Ok(())

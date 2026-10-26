@@ -1,5 +1,6 @@
-//! Referrals on the built program: a sale locks its referrer and schedules the credit, the house's
-//! tasks credit and pay, and a card from before referrals grows to the layout unreferred. The
+//! Referrals on the built program: a sale naming a code schedules the link, a linked sale the
+//! credit; the house's tasks link, credit and pay, and a card from before referrals grows to the
+//! layout unlinked. The
 //! Magic program and the vault are stand-ins that record what they are asked.
 //!
 //!     cargo build-sbf && cargo test --test referral -- --ignored --nocapture
@@ -226,19 +227,42 @@ fn sale_accounts(ix: &Instruction, player: &Player, card: Account, grown_books: 
     accounts
 }
 
+/// Whether the Magic stand-in was asked to schedule a task carrying `bytes`.
+fn scheduled(bytes: &[u8]) -> bool {
+    calls_to(magic()).iter().any(|d| d[..4] == 6u32.to_le_bytes() && d.windows(bytes.len()).any(|w| w == bytes))
+}
+
+fn link_data(amount: u64, generation: u64) -> Vec<u8> {
+    let mut data = scratch_cards::ScratchCardsInstruction::LINK_REFERRAL.to_le_bytes().to_vec();
+    data.extend_from_slice(&amount.to_le_bytes());
+    data.extend_from_slice(&generation.to_le_bytes());
+    data
+}
+
+fn credit_data(amount: u64) -> Vec<u8> {
+    let mut data = scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL.to_le_bytes().to_vec();
+    data.extend_from_slice(&amount.to_le_bytes());
+    data
+}
+
+fn linked(account: Pubkey, since: i64) -> Referral {
+    Referral { referrer: account.to_bytes(), since, ..Referral::unlinked() }
+}
+
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_referred_first_card_locks_its_referrer_and_schedules_the_credit() {
+fn a_first_card_naming_a_code_schedules_the_link_and_links_nothing_yet() {
     let player = Player::new();
-    let referrer = Pubkey::new_unique();
-    let ix = resolve_purchase(&player, Some(referrer), &[magic_context()]);
+    let code = Pubkey::new_unique();
+    let ix = resolve_purchase(&player, Some(code), &[magic_context()]);
     let result = with_stand_ins().process_instruction(&ix, &sale_accounts(&ix, &player, no_card(), true));
     assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(magic_calls(), vec![12, 6], "created, then the credit scheduled");
+    assert_eq!(magic_calls(), vec![12, 6], "created, then the link scheduled");
     assert_eq!(calls_to(magic())[0][4..8], (Card::REFERRED_SIZE as u32).to_le_bytes());
-    assert_eq!(player.section_after(&result.resulting_accounts).referrer, referrer.to_bytes());
-    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 1, ..Counters::default() });
-    println!("resolve_purchase, a referred card: {} CU", result.compute_units_consumed);
+    assert!(scheduled(&link_data(PRICE / 100, 1)) && scheduled(code.as_ref()));
+    assert_eq!(player.section_after(&result.resulting_accounts).referrer(), None);
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_unreferred: 1, ..Counters::default() });
+    println!("resolve_purchase, naming a code: {} CU", result.compute_units_consumed);
 }
 
 #[test]
@@ -256,7 +280,17 @@ fn an_unreferred_sale_is_as_before_and_counted() {
 
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_referred_sale_without_the_magic_context_is_refused() {
+fn a_code_naming_the_player_s_own_card_is_not_worth_a_task() {
+    let player = Player::new();
+    let ix = resolve_purchase(&player, Some(player.card), &[magic_context()]);
+    let result = with_stand_ins().process_instruction(&ix, &sale_accounts(&ix, &player, no_card(), true));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![12]);
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_sale_naming_a_code_without_the_magic_context_is_refused() {
     let player = Player::new();
     let ix = resolve_purchase(&player, Some(Pubkey::new_unique()), &[]);
     let result = with_stand_ins().process_instruction(&ix, &sale_accounts(&ix, &player, no_card(), true));
@@ -267,30 +301,34 @@ fn a_referred_sale_without_the_magic_context_is_refused() {
 
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_card_from_before_referrals_grows_unreferred_whoever_the_sale_names() {
+fn a_card_from_before_referrals_grows_unlinked_and_may_link() {
     let player = Player::new();
     let ix = resolve_purchase(&player, Some(Pubkey::new_unique()), &[magic_context()]);
     let before = player.card_at(Card::PERSISTENT_SIZE, 4, None);
     let result = with_stand_ins().process_instruction(&ix, &sale_accounts(&ix, &player, before, true));
     assert_eq!(result.raw_result, Ok(()));
-    assert_eq!(magic_calls(), vec![13], "grown in place, and nothing scheduled");
+    assert_eq!(magic_calls(), vec![13, 6], "grown in place, then the link scheduled");
+    assert!(scheduled(&link_data(PRICE / 100, 5)));
     assert_eq!(player.section_after(&result.resulting_accounts).referrer(), None);
     assert_eq!(counters_after(&result.resulting_accounts), Counters { players_unreferred: 1, ..Counters::default() });
 }
 
 #[test]
 #[ignore = "needs cargo build-sbf"]
-fn a_referred_card_s_next_sale_credits_its_referrer_again() {
+fn a_linked_card_s_next_sale_credits_its_link_whatever_code_it_names() {
     let player = Player::new();
-    let referrer = Pubkey::new_unique();
-    let section = Referral::new(Some(&referrer.to_bytes()), &player.user.to_bytes(), 9);
-    let ix = resolve_purchase(&player, None, &[magic_context()]);
+    let referrer = Player::new();
+    let section = linked(referrer.card, 9);
+    let ix = resolve_purchase(&player, Some(Pubkey::new_unique()), &[magic_context()]);
     let before = player.card_at(Card::REFERRED_SIZE, 2, Some(section));
     let result = with_stand_ins().process_instruction(&ix, &sale_accounts(&ix, &player, before, true));
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(magic_calls(), vec![6]);
+    assert!(scheduled(&credit_data(PRICE / 100)) && scheduled(referrer.card.as_ref()));
+    assert!(!scheduled(&link_data(PRICE / 100, 3)));
     assert_eq!(player.section_after(&result.resulting_accounts), section);
     assert_eq!(counters_after(&result.resulting_accounts), Counters::default());
+    println!("resolve_purchase, a linked card: {} CU", result.compute_units_consumed);
 }
 
 #[test]
@@ -312,7 +350,7 @@ fn as_test(ix: casino_core::chain::Instruction) -> Instruction {
 }
 
 fn owed_card(player: &Player, owed: u64) -> Account {
-    let section = Referral { owed, earned: owed, ..Referral::new(None, &player.user.to_bytes(), 0) };
+    let section = Referral { owed, earned: owed, ..Referral::unlinked() };
     player.card_at(Card::REFERRED_SIZE, 3, Some(section))
 }
 
@@ -330,7 +368,7 @@ fn a_referrer_s_card_from_before_referrals_is_grown_by_its_first_credit() {
     let referrer = Player::new();
     let ix = as_test(referral::credit_instruction(
         &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.card), &scratch_cards::constants::ANALYTICS,
-        scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL, 1_000,
+        scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL, 1_000, None,
     ));
     let result = with_stand_ins().process_instruction(&ix, &credit_accounts(&ix, referrer.card_at(Card::PERSISTENT_SIZE, 4, None)));
     assert_eq!(result.raw_result, Ok(()));
@@ -347,7 +385,7 @@ fn the_house_s_credit_adds_to_what_the_referrer_is_owed() {
     let referrer = Player::new();
     let ix = as_test(referral::credit_instruction(
         &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.card), &scratch_cards::constants::ANALYTICS,
-        scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL, referral::cut(PRICE),
+        scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL, referral::cut(PRICE), None,
     ));
     let accounts = |ix: &Instruction| credit_accounts(ix, owed_card(&referrer, 50));
     let result = with_stand_ins().process_instruction(&ix, &accounts(&ix));
@@ -437,4 +475,111 @@ fn a_card_still_owed_is_not_closed_until_it_is_paid() {
     assert!(magic_calls().is_empty());
     let result = with_stand_ins().process_instruction(&ix, &accounts(0));
     assert_eq!(result.raw_result, Ok(()));
+}
+
+fn link_task(code: Pubkey, player: &Player, amount: u64) -> Instruction {
+    as_test(referral::link_instruction(
+        &core_key(program()), &core_key(pda(&[b"house"])), &core_key(code), &core_key(player.card),
+        scratch_cards::ScratchCardsInstruction::LINK_REFERRAL, amount, 3,
+    ))
+}
+
+fn link_accounts(ix: &Instruction, code: Account, card: Account) -> Vec<(Pubkey, Account)> {
+    let k = |i: usize| ix.accounts[i].pubkey;
+    vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), code), (k(3), card), (k(4), wallet()), (k(5), builtin(magic(), "fake_magic"))]
+}
+
+/// Any account holding a wallet at the owner's place: another game's, here a stranger program's.
+fn foreign_code(owner: Pubkey) -> Account {
+    let mut data = vec![7u8; 96];
+    data[referral::OWNER_AT..referral::OWNER_AT + 32].copy_from_slice(owner.as_ref());
+    Account { lamports: SOL, data, owner: Pubkey::new_unique(), executable: false, rent_epoch: 0 }
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_link_task_finds_the_code_owner_s_card_here_and_schedules_the_linking_credit() {
+    let player = Player::new();
+    let referrer = Player::new();
+    let code = Pubkey::new_unique();
+    let ix = link_task(code, &player, 500);
+    let card = player.card_at(Card::REFERRED_SIZE, 3, Some(Referral::unlinked()));
+    let result = with_stand_ins().process_instruction(&ix, &link_accounts(&ix, foreign_code(referrer.user), card));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![6]);
+    assert!(scheduled(&credit_data(500)) && scheduled(referrer.card.as_ref()) && scheduled(player.card.as_ref()));
+    println!("link_referral: {} CU", result.compute_units_consumed);
+
+    let card = || player.card_at(Card::REFERRED_SIZE, 3, Some(Referral::unlinked()));
+    for code in [foreign_code(player.user), foreign_code(Pubkey::default()), wallet()] {
+        let result = with_stand_ins().process_instruction(&ix, &link_accounts(&ix, code, card()));
+        assert_eq!(result.raw_result, Ok(()));
+        assert!(magic_calls().is_empty(), "the player, no one, or nothing at all links nothing");
+    }
+
+    let mut stranger = ix.clone();
+    stranger.accounts[0].pubkey = Pubkey::new_unique();
+    let result = with_stand_ins().process_instruction(&stranger, &link_accounts(&stranger, foreign_code(referrer.user), card()));
+    assert_eq!(result.raw_result, core(casino_core::CoreError::Unauthorized));
+}
+
+fn linking_credit(referrer: &Player, player: &Player, amount: u64) -> Instruction {
+    as_test(referral::credit_instruction(
+        &core_key(program()), &core_key(pda(&[b"house"])), &core_key(referrer.card), &scratch_cards::constants::ANALYTICS,
+        scratch_cards::ScratchCardsInstruction::CREDIT_REFERRAL, amount, Some(&core_key(player.card)),
+    ))
+}
+
+fn linking_accounts(ix: &Instruction, referrer_card: Account, player_card: Account) -> Vec<(Pubkey, Account)> {
+    let mut accounts = credit_accounts(ix, referrer_card);
+    let mut unreferred = books(true);
+    bytemuck::from_bytes_mut::<Counters>(&mut unreferred.data[Analytics::SIZE..]).players_unreferred = 1;
+    accounts[3].1 = unreferred;
+    accounts.push((ix.accounts[6].pubkey, player_card));
+    accounts
+}
+
+fn section_of(accounts: &[(Pubkey, Account)], card: Pubkey) -> Referral {
+    let data = &accounts.iter().find(|(k, _)| *k == card).unwrap().1.data;
+    Referral::read(data, Card::PERSISTENT_SIZE).unwrap()
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn the_linking_credit_links_only_to_a_card_that_exists_then_credits_it() {
+    let player = Player::new();
+    let referrer = Player::new();
+    let ix = linking_credit(&referrer, &player, 500);
+    let unlinked = || player.card_at(Card::REFERRED_SIZE, 3, Some(Referral::unlinked()));
+
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, owed_card(&referrer, 0), unlinked()));
+    assert_eq!(result.raw_result, Ok(()));
+    let link = section_of(&result.resulting_accounts, player.card);
+    assert_eq!(link.referrer, referrer.card.to_bytes());
+    assert_eq!(section_of(&result.resulting_accounts, referrer.card).owed, 500);
+    assert_eq!(counters_after(&result.resulting_accounts),
+        Counters { players_referred: 1, players_unreferred: 0, owed: 500, earned: 500 });
+    println!("credit_referral, linking: {} CU", result.compute_units_consumed);
+
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, no_card(), unlinked()));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_of(&result.resulting_accounts, player.card).referrer(), None, "no card, no link");
+    assert_eq!(counters_after(&result.resulting_accounts).players_referred, 0);
+
+    let elsewhere = player.card_at(Card::REFERRED_SIZE, 3, Some(linked(Pubkey::new_unique(), 4)));
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, owed_card(&referrer, 0), elsewhere));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_of(&result.resulting_accounts, referrer.card).owed, 0, "linked to someone else since");
+
+    let already = player.card_at(Card::REFERRED_SIZE, 3, Some(linked(referrer.card, 4)));
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, owed_card(&referrer, 0), already));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_of(&result.resulting_accounts, player.card).since, 4);
+    assert_eq!(section_of(&result.resulting_accounts, referrer.card).owed, 500, "linked to it before: credited once");
+
+    let at_no_cut = linking_credit(&referrer, &player, 0);
+    let result = with_stand_ins().process_instruction(&at_no_cut, &linking_accounts(&at_no_cut, owed_card(&referrer, 0), unlinked()));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_of(&result.resulting_accounts, player.card).referrer, referrer.card.to_bytes());
+    assert_eq!(section_of(&result.resulting_accounts, referrer.card).earned, 0);
 }
