@@ -421,7 +421,8 @@ fn anyone_may_claim_and_the_house_pays_what_is_owed_once() {
     assert_eq!(result.raw_result, Ok(()));
     assert_eq!(magic_calls(), vec![6]);
     let result = with_stand_ins().process_instruction(&claim, &claim_accounts(0));
-    assert_eq!(result.raw_result, core(casino_core::CoreError::NothingToCollect));
+    assert_eq!(result.raw_result, Ok(()), "nothing owed is not refused");
+    assert!(magic_calls().is_empty(), "and nothing is scheduled");
 
     let pay = as_test(referral::pay_instruction(
         &core_key(program()), &core_key(pda(&[b"house"])), &core_key(player.card), &core_key(player.user),
