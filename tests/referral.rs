@@ -594,3 +594,24 @@ fn a_linked_card_s_sale_without_the_magic_context_still_settles_and_credits_noth
     assert_eq!(result.raw_result, Ok(()));
     assert!(magic_calls().is_empty(), "nothing scheduled");
 }
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_card_from_the_retired_v2_shelf_is_rewritten_at_the_current_size_from_generation_one() {
+    let player = Player::new();
+    let ix = resolve_purchase(&player, None, &[]);
+    let mut c = Card::zeroed();
+    c.discriminator = card::DISCRIMINATOR;
+    c.version = card::VERSION;
+    c.user = player.user.to_bytes();
+    c.status = CardStatus::Collected as u64;
+    let mut v2 = bytemuck::bytes_of(&c).to_vec();
+    v2.resize(Card::SIZE + 992 + 8, 7);
+    let result = with_stand_ins().process_instruction(&ix, &sale_accounts(&ix, &player, owned(v2), true));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(magic_calls(), vec![13], "resized in place");
+    let data = &result.resulting_accounts.iter().find(|(k, _)| *k == player.card).unwrap().1.data;
+    assert_eq!(data.len(), Card::REFERRED_SIZE);
+    assert_eq!(u64::from_le_bytes(data[Card::WITH_TERMS..Card::PERSISTENT_SIZE].try_into().unwrap()), 1);
+    assert_eq!(player.section_after(&result.resulting_accounts).referrer(), None);
+}

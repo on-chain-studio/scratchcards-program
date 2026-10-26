@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use casino_core::chain::*;
 use casino_core::referral::{self, Referral};
 
-use crate::state::config::{CardConfig, Terms, CARD_SIZE_V2};
+use crate::state::config::CardConfig;
 
 pub const DISCRIMINATOR: u64 = 3;
 pub const VERSION:       u64 = 1;
@@ -33,41 +33,26 @@ pub struct Card {
 impl Card {
     pub const SIZE: usize = size_of::<Self>();
 
-    /// A card sold with its terms printed after it, then its generation. A card keeps the layout
-    /// of the terms it was sold under: v3 terms, or a v2 shelf's — the account's size says which.
+    /// A card sold with its terms printed after it, then its generation.
     pub const WITH_TERMS: usize = Self::SIZE + size_of::<CardConfig>();
     pub const PERSISTENT_SIZE: usize = Self::WITH_TERMS + 8;
-    pub const WITH_TERMS_V2: usize = Self::SIZE + CARD_SIZE_V2;
-    pub const PERSISTENT_SIZE_V2: usize = Self::WITH_TERMS_V2 + 8;
     /// With the player's referral section after the generation: what every card is sold at now.
-    /// A card at a smaller size is brought to this one by its next purchase, unreferred.
+    /// A card at any other size is brought to this one by its next purchase, unreferred. One
+    /// sold from the retired v2 shelf reads as having no generation, so it starts again at 1:
+    /// collected long ago, it has no randomness or task in flight for the number to meet.
     pub const REFERRED_SIZE: usize = Self::PERSISTENT_SIZE + referral::SIZE;
-    pub const REFERRED_SIZE_V2: usize = Self::PERSISTENT_SIZE_V2 + referral::SIZE;
-
-    /// The size a card account holding `terms` takes.
-    pub fn persistent_size(terms: &Terms) -> usize {
-        match terms {
-            Terms::V2(_) => Self::REFERRED_SIZE_V2,
-            Terms::V3(_) => Self::REFERRED_SIZE,
-        }
-    }
 
     /// How long the printed terms are, by the account's size; `None` for a card without terms.
     fn terms_len(len: usize) -> Option<usize> {
         match len {
             Self::WITH_TERMS | Self::PERSISTENT_SIZE | Self::REFERRED_SIZE => Some(size_of::<CardConfig>()),
-            Self::WITH_TERMS_V2 | Self::PERSISTENT_SIZE_V2 | Self::REFERRED_SIZE_V2 => Some(CARD_SIZE_V2),
             _ => None,
         }
     }
 
     /// Where the referral section sits, on a card at a size that has one.
     fn referral_at(len: usize) -> Option<usize> {
-        match len {
-            Self::REFERRED_SIZE => Some(Self::PERSISTENT_SIZE),
-            Self::REFERRED_SIZE_V2 => Some(Self::PERSISTENT_SIZE_V2),
-            _ => None,
-        }
+        (len == Self::REFERRED_SIZE).then_some(Self::PERSISTENT_SIZE)
     }
 
     /// The player's referral section, on a card at the current size.
@@ -126,23 +111,19 @@ impl Card {
         Ok(s)
     }
 
-    /// The terms this card was sold under, at the layout they were printed in, or `None` for a
-    /// pre-terms card (falls back to the shelf).
+    /// The terms this card was sold under, or `None` for a card without them (falls back to the
+    /// shelf).
     // On the heap: the terms are 1.3 KB, and the instructions reading them sit near the 4 KB SBF
     // stack limit — a few copies on the stack overflowed `request_collect`'s frame.
-    pub fn terms(account: &AccountInfo) -> Result<Option<Box<Terms>>, ProgramError> {
+    pub fn terms(account: &AccountInfo) -> Result<Option<Box<CardConfig>>, ProgramError> {
         let data = account.try_borrow()?;
         let Some(n) = Self::terms_len(data.len()) else { return Ok(None) };
         let bytes = &data[Self::SIZE..Self::SIZE + n];
-        Ok(Some(Box::new(if n == CARD_SIZE_V2 {
-            Terms::V2(bytes.try_into().unwrap())
-        } else {
-            Terms::V3(*bytemuck::try_from_bytes::<CardConfig>(bytes).map_err(|_| ProgramError::InvalidAccountData)?)
-        })))
+        Ok(Some(Box::new(*bytemuck::try_from_bytes::<CardConfig>(bytes).map_err(|_| ProgramError::InvalidAccountData)?)))
     }
 
-    pub fn write_terms(account: &AccountInfo, terms: &Terms) -> ProgramResult {
-        let bytes = terms.bytes();
+    pub fn write_terms(account: &AccountInfo, terms: &CardConfig) -> ProgramResult {
+        let bytes = bytemuck::bytes_of(terms);
         let mut data = account.try_borrow_mut_data()?;
         if Self::terms_len(data.len()) != Some(bytes.len()) {
             return Err(ProgramError::AccountDataTooSmall);

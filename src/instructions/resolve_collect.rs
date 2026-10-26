@@ -54,10 +54,10 @@ impl ResolveCollect {
         pda::validate(program_id, analytics_account, &[b"analytics"])?;
         let a = Analytics::load_mut(analytics_account)?;
         if let Some(terms) = Card::terms(card_account)? {
-            let wins = engine::evaluate_terms(&terms, &seed)?;
+            let wins = engine::evaluate(&terms, &seed)?;
             for (i, amount) in wins.amounts.iter().enumerate() {
                 if *amount > 0 {
-                    let mint = terms.mint(i).ok_or(ProgramError::InvalidAccountData)?;
+                    let mint = *terms.tokens().get(i).ok_or(ProgramError::InvalidAccountData)?;
                     casino_core::analytics::record_payout(&mut a.payouts, &mint, *amount);
                 }
             }

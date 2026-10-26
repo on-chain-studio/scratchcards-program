@@ -46,7 +46,7 @@ impl RequestPurchase {
             return Err(CoreError::InvalidPDA.into());
         }
 
-        let price = config::shelf_card(config_account, self.card_id)?.price_lamports();
+        let price = config::shelf_card(config_account, self.card_id)?.price_lamports;
         let take = price.saturating_mul(JACKPOT_SHARE_BP) / 10_000;
         let sol = Pubkey::default();
 

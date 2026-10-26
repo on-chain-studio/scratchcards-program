@@ -69,13 +69,11 @@ impl CreditReferral {
         let mut section = match Card::referral(card_account) {
             Some(section) => section,
             None => {
-                let grown = match card_account.data_len() {
-                    Card::PERSISTENT_SIZE => Card::REFERRED_SIZE,
-                    Card::PERSISTENT_SIZE_V2 => Card::REFERRED_SIZE_V2,
-                    _ => return Ok(()),
-                };
+                if card_account.data_len() != Card::PERSISTENT_SIZE {
+                    return Ok(());
+                }
                 resize_ephemeral_account(house, card_account, ephemeral_vault, magic_program,
-                    grown as u32, &[&[b"house", &[house_bump]]])?;
+                    Card::REFERRED_SIZE as u32, &[&[b"house", &[house_bump]]])?;
                 referral::count_player(Analytics::referrals(analytics_account));
                 Referral::unlinked()
             }

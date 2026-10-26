@@ -109,12 +109,12 @@ fn priced(
         Some(t) => t,
         None => config::shelf_card(config_account, card_id)?,
     };
-    let wins = engine::evaluate_terms(&terms, seed)?;
+    let wins = engine::evaluate(&terms, seed)?;
     let mut movements = Vec::new();
     for (i, amount) in wins.amounts.iter().enumerate() {
         if *amount == 0 { continue; }
         movements.push(receipt::Movement {
-            mint: Pubkey::new_from_array(terms.mint(i).ok_or(ProgramError::InvalidAccountData)?),
+            mint: Pubkey::new_from_array(*terms.tokens().get(i).ok_or(ProgramError::InvalidAccountData)?),
             amount: *amount,
             from: 1,
             to: 0,

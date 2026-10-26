@@ -55,7 +55,7 @@ no-op (the TEE admission probes send it), and so is every retired gap (5, 6, 8, 
 | 27 | ResolvePurchase | Settle callback: creates the ephemeral card, or reuses a collected one (resized in place if its terms were another layout's), with its terms; creates the card's private ER permission, or adds its missing members (the wallet, the vault and the casino floor as full readers); counts the sale in analytics. |
 | 28 | RequestReveal | Permissionless and retryable (from Bought *or* Requested): a scoped, high-priority request to MagicBlock VRF. |
 | 29 | ResolveCollect | Settle callback: marks the card collected; counts the payout in analytics. |
-| 31 | CloseStrayCard | Admin: drops a card of a layout this program no longer reads, by address; a v2- or v3-size card is a live ticket and refused. |
+| 31 | CloseStrayCard | Admin: drops a card of a layout this program no longer reads, by address; a card of the current size is a live ticket and refused; one from the retired v2 shelf is stray. |
 | 32 | UpgradePermissions | Adds any missing member to a card's permission, by close and create. |
 
 ## The engine
@@ -76,10 +76,11 @@ roles (plate, number, mark, jackpot) decide the shape — a line, an anywhere-ma
 per row, a token hunt, a grid of paying lines — and every multiple is sheet data: a pay
 entry's `mult`, the `LINEAR` flag that multiplies it by the group size, and a tier
 `factor` for a slot multiplier. What a win *pays* is a prize tier drawn by weight, then
-one of that tier's coins drawn by weight (even on a v3 card; a v2 card's old pool weights),
+one of that tier's coins drawn by weight,
 at the amount the tier prints for that coin — and a plate is a coin in its tier's frame, so
-a match is identical plates. The engine reads a v2 card as one tier (`parse_v2`) and deals
-it exactly as the v2 engine did. Re-rating a diagonal, changing what a match pays, or
+a match is identical plates. The v2 shelf is retired: the program reads none of it, and a player
+account still holding a v2 card is rewritten at the current size by its next purchase. Only the
+engine keeps v2 (`parse_v2`), to verify a legacy card from its seed. Re-rating a diagonal, changing what a match pays, or
 retiring a card is a `SetCard`, never a code change. The shelf currently publishes four
 cards; how it is balanced and published is `RUNBOOK.md`.
 
@@ -89,7 +90,7 @@ cards; how it is balanced and published is `RUNBOOK.md`.
 cargo build-sbf                              # target/deploy/scratch_cards.so
 cargo +1.89.0-sbpf-solana-v1.52 test         # engine determinism/rate tests, layout + wire pins
 cargo test --test program -- --ignored       # the built .so in Mollusk: dispatch, refusals, VRF, pot
-cargo test --test v2 --test collect_v3 -- --ignored   # the built .so collecting v2 (live mainnet shelf) and v3 tickets
+cargo test --test v2 --test collect_v3 -- --ignored   # the built .so refusing the retired v2 shelf, collecting v3 tickets
 ```
 
 The `.so` must stay within the mainnet program account (323,216 bytes of ProgramData, 45 of

@@ -192,15 +192,6 @@ enum Command {
         #[arg(long)]
         wallet: Option<PathBuf>,
     },
-    /// Devnet, debug build only: writes a player's card account from thin air — a collected
-    /// ticket of the v2 layout's size, its terms the live mainnet shelf's slot 0 — so the next
-    /// purchase has a card of another layout to resize. The program refuses it unless built with
-    /// `--features devnet-debug`.
-    FabricateV2Card {
-        /// The player whose card slot to fabricate; the admin by default.
-        #[arg(long)]
-        wallet: Option<PathBuf>,
-    },
     /// Plays real cards: buy, reveal, collect.
     Play {
         #[arg(default_value_t = 3)]
@@ -278,13 +269,6 @@ async fn require_current(chain: &Chain) -> Result<()> {
 
 async fn shelf(chain: &Chain) -> Result<(u64, Vec<CardConfig>)> {
     let account = chain.account(&config()).await?.context("no config on chain — run `setup`")?;
-    // A shelf not yet re-stamped holds v2 cards: shown as the one tier the program deals them as.
-    let header: casino_core::shelf::Header = casino_ops::decode(&account.data).context("the config is not a shelf")?;
-    if header.version == scratch_cards::state::config::VERSION_V2 {
-        let size = scratch_cards::state::config::CARD_SIZE_V2;
-        let items = account.data[scratch_cards::state::config::Config::HEADER..].chunks_exact(size).map(sheet::v2_as_v3).collect();
-        return Ok((header.count, items));
-    }
     let (header, items) = casino_ops::shelf::<CardConfig>(&account.data).context("the config is not a shelf")?;
     Ok((header.count, items))
 }
@@ -628,11 +612,7 @@ async fn main() -> Result<()> {
             match rollup.account(&card_of(&user)).await? {
                 None => println!("no card for {user}"),
                 Some(account) => {
-                    let at = match account.data.len() {
-                        Card::REFERRED_SIZE => Some(Card::PERSISTENT_SIZE),
-                        Card::REFERRED_SIZE_V2 => Some(Card::PERSISTENT_SIZE_V2),
-                        _ => None,
-                    };
+                    let at = (account.data.len() == Card::REFERRED_SIZE).then_some(Card::PERSISTENT_SIZE);
                     match at.and_then(|at| Referral::read(&account.data, at)) {
                         Some(r) => {
                             match r.referrer() {
@@ -689,37 +669,6 @@ referrals not counted yet — run `grow-analytics`"),
         Command::TopUp { factor, fill, check } => float::top_up(&chain, factor, fill, check).await,
         Command::AcquireFloat { factor, slippage, swap } => float::acquire_float(&chain, factor, slippage, swap).await,
         Command::FetchPrices => prices::fetch(&chain.http).await,
-        Command::FabricateV2Card { wallet: path } => {
-            use scratch_cards::instructions::fabricate_card::FabricateCard;
-            require_admin(&chain)?;
-            if chain.net.mainnet {
-                bail!("devnet only");
-            }
-            let user = wallet(&chain, path)?.pubkey();
-            let rollup = chain.rollup().await?;
-            if rollup.account(&card_of(&user)).await?.is_some() {
-                bail!("{user} already has a card — close it first (close-card)");
-            }
-            // A collected v2 ticket, as the v2 program left one: header, 992-byte terms, generation.
-            let shelf: &[u8] = include_bytes!("../../tests/fixtures/mainnet_shelf_v2.bin");
-            let terms = &shelf[56..56 + scratch_cards::state::config::CARD_SIZE_V2];
-            let mut c: Card = bytemuck::Zeroable::zeroed();
-            c.discriminator = card::DISCRIMINATOR;
-            c.version = card::VERSION;
-            c.user = user.to_bytes();
-            c.status = scratch_cards::state::card::CardStatus::Collected as u64;
-            let mut data = bytemuck::bytes_of(&c).to_vec();
-            data.extend_from_slice(terms);
-            data.extend_from_slice(&1u64.to_le_bytes());
-            assert_eq!(data.len(), Card::PERSISTENT_SIZE_V2);
-            let ix = built(generated::ScratchCards::fabricate_card_instruction(
-                admin, house(), card_of(&user), EPHEMERAL_VAULT, MAGIC_PROGRAM, FabricateCard { user, data },
-            ))?;
-            let signature = rollup.send(&[ix], &[&chain.admin]).await?;
-            let len = rollup.account(&card_of(&user)).await?.map(|a| a.data.len()).unwrap_or(0);
-            println!("fabricated a collected v2 ticket for {user}: {len} bytes  {}", short(signature));
-            Ok(())
-        }
         Command::ClosePlayer { wallet: path } => {
             let wallet = wallet(&chain, path)?;
             let before = chain.balance(&wallet.pubkey()).await?;
@@ -905,7 +854,8 @@ mod tests {
         let resolve = generated::ScratchCards::resolve_purchase_instruction(
             Pubkey::new_from_array([2; 32]), casino_ops::vault::authority(), config(), house(), card_of(&user), EPHEMERAL_VAULT,
             MAGIC_PROGRAM, analytics(), permission::address(&card_of(&user)), PERMISSION_PROGRAM,
-            ResolvePurchase { human: user, card_id: 0 },
+            Vec::<solarium_client::wire::AccountMeta>::new(),
+            ResolvePurchase { human: user, card_id: 0, referrer: casino_core::referral::Referrer(None) },
         )
         .unwrap();
         let named: Vec<(Pubkey, bool)> = resolve.accounts.iter().skip(2).map(|m| (m.pubkey, m.is_writable)).collect();
@@ -963,28 +913,6 @@ mod tests {
                 assert_eq!(paid, vec![sol], "{}", card.id);
             }
         }
-    }
-
-    /// The live mainnet shelf, still v2, reads as one-tier cards with its own coins and amounts —
-    /// what `cards`, `verify` and the float sizing see until it is re-stamped.
-    #[test]
-    fn a_v2_shelf_reads_as_one_tier_cards() {
-        let shelf: &[u8] = include_bytes!("../../tests/fixtures/mainnet_shelf_v2.bin");
-        let count = u64::from_le_bytes(shelf[48..56].try_into().unwrap()) as usize;
-        let size = scratch_cards::state::config::CARD_SIZE_V2;
-        for i in 0..count {
-            let b = &shelf[56 + i * size..56 + (i + 1) * size];
-            let card = sheet::v2_as_v3(b);
-            assert_eq!(card.price_lamports, u64::from_le_bytes(b[..8].try_into().unwrap()));
-            assert_eq!(card.row_len, 1);
-            assert_eq!(card.token_len, b[21]);
-            for c in 0..b[21] as usize {
-                assert_eq!(card.tokens[c], b[512 + c * 48..544 + c * 48]);
-                assert!(card.rows[0].amounts[c] > 0);
-            }
-        }
-        let cards: Vec<_> = (0..count).map(|i| sheet::v2_as_v3(&shelf[56 + i * size..56 + (i + 1) * size])).collect();
-        assert!(!sheet::worst_cases(&cards, &Mints::default()).is_empty());
     }
 
     #[test]

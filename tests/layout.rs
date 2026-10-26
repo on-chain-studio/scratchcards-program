@@ -36,7 +36,7 @@ fn a_card_carries_its_terms() {
     assert_eq!(Card::SIZE, 96, "card header moved — the app decodes the snapshot by offset");
     assert_eq!(Card::WITH_TERMS, 96 + CARD_SIZE);
     assert_eq!(Card::REFERRED_SIZE, Card::PERSISTENT_SIZE + casino_core::referral::SIZE, "the referral section follows the generation");
-    assert_eq!((Card::REFERRED_SIZE, Card::REFERRED_SIZE_V2), (1480, 1160));
+    assert_eq!(Card::REFERRED_SIZE, 1480);
 }
 
 /// The little-endian u64 an instruction starts with. Moving one silently repoints every client

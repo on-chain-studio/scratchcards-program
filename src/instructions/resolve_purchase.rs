@@ -73,9 +73,9 @@ impl ResolvePurchase {
 
         let terms = config::shelf_card(config_account, card_id)?;
 
-        // A card holds its terms at their own layout, so one bought under the other layout is
-        // resized to this one's — in place, so its permission stays with it.
-        let size = Card::persistent_size(&terms);
+        // A card of any other size is resized to the current one in place, so its permission
+        // stays with it.
+        let size = Card::REFERRED_SIZE;
         if card_account.data_len() != 0 && card_account.data_len() != size {
             casino_core::magicblock::resize_ephemeral_account(house, card_account, ephemeral_vault, magic_program,
                 size as u32, &[&[b"house", &[house_bump]]])?;
@@ -110,7 +110,7 @@ impl ResolvePurchase {
 
         // This callback only fires on a settled payment, so the count is settled money.
         pda::validate(program_id, analytics_account, &[b"analytics"])?;
-        let price = terms.price_lamports();
+        let price = terms.price_lamports;
         let take = price.saturating_mul(JACKPOT_SHARE_BP) / 10_000;
         let a = Analytics::load_mut(analytics_account)?;
         a.lamports_in = a.lamports_in.saturating_add(price);
