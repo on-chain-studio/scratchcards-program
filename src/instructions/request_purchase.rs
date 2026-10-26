@@ -9,7 +9,7 @@ use crate::state::config;
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct RequestPurchase {
     pub card_id: u64,
-    /// Who referred the player. Locked only if this purchase creates their card; ignored after.
+    /// A referral code: read only while the player's card is not linked yet.
     pub referrer: Referrer,
 }
 

@@ -467,14 +467,21 @@ fn a_card_still_owed_is_not_closed_until_it_is_paid() {
         AccountMeta::new(player.card, false),
         AccountMeta::new(fixed(casino_core::ids::EPHEMERAL_VAULT_ID), false),
         AccountMeta::new_readonly(magic(), false),
+        AccountMeta::new(pda(&[b"analytics"]), false),
     ]);
     let k = |i: usize| ix.accounts[i].pubkey;
-    let accounts = |owed| vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), owed_card(&player, owed)), (k(3), wallet()), (k(4), builtin(magic(), "fake_magic"))];
-    let result = with_stand_ins().process_instruction(&ix, &accounts(700));
+    let mut books = books(true);
+    *bytemuck::from_bytes_mut::<Counters>(&mut books.data[Analytics::SIZE..]) = Counters { players_referred: 4, players_unreferred: 6, ..Counters::default() };
+    let accounts = |card| vec![(k(0), wallet()), (k(1), owned(vec![])), (k(2), card), (k(3), wallet()), (k(4), builtin(magic(), "fake_magic")), (k(5), books.clone())];
+    let result = with_stand_ins().process_instruction(&ix, &accounts(owed_card(&player, 700)));
     assert_eq!(result.raw_result, Err(InstructionError::Custom(scratch_cards::error::GameError::StillOwed as u32)));
     assert!(magic_calls().is_empty());
-    let result = with_stand_ins().process_instruction(&ix, &accounts(0));
+    let result = with_stand_ins().process_instruction(&ix, &accounts(owed_card(&player, 0)));
     assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 4, players_unreferred: 5, ..Counters::default() });
+    let linked_card = player.card_at(Card::REFERRED_SIZE, 3, Some(linked(Player::new().card, 2)));
+    let result = with_stand_ins().process_instruction(&ix, &accounts(linked_card));
+    assert_eq!(counters_after(&result.resulting_accounts), Counters { players_referred: 3, players_unreferred: 6, ..Counters::default() }, "a linked player comes off the referred");
 }
 
 fn link_task(code: Pubkey, player: &Player, amount: u64) -> Instruction {
@@ -614,4 +621,36 @@ fn a_card_from_the_retired_v2_shelf_is_rewritten_at_the_current_size_from_genera
     assert_eq!(data.len(), Card::REFERRED_SIZE);
     assert_eq!(u64::from_le_bytes(data[Card::WITH_TERMS..Card::PERSISTENT_SIZE].try_into().unwrap()), 1);
     assert_eq!(player.section_after(&result.resulting_accounts).referrer(), None);
+}
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_referrer_s_card_of_an_older_layout_is_rewritten_once_collected_then_linked() {
+    let (player, referrer) = (Player::new(), Player::new());
+    let old = |len: usize, status: CardStatus| {
+        let mut c = Card::zeroed();
+        c.discriminator = card::DISCRIMINATOR;
+        c.version = card::VERSION;
+        c.user = referrer.user.to_bytes();
+        c.status = status as u64;
+        let mut data = bytemuck::bytes_of(&c).to_vec();
+        data.resize(len, 9);
+        owned(data)
+    };
+    let ix = linking_credit(&referrer, &player, 500);
+    for len in [Card::SIZE, Card::WITH_TERMS, Card::SIZE + 992 + 8] {
+        let unlinked = player.card_at(Card::REFERRED_SIZE, 3, Some(Referral::unlinked()));
+        let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, old(len, CardStatus::Collected), unlinked));
+        assert_eq!(result.raw_result, Ok(()), "{len}");
+        let data = &result.resulting_accounts.iter().find(|(k, _)| *k == referrer.card).unwrap().1.data;
+        assert_eq!(data.len(), Card::REFERRED_SIZE, "{len}");
+        assert_eq!(u64::from_le_bytes(data[Card::WITH_TERMS..Card::PERSISTENT_SIZE].try_into().unwrap()), 0, "{len}: no generation to keep");
+        assert_eq!(section_of(&result.resulting_accounts, referrer.card).owed, 500, "{len}");
+        assert_eq!(section_of(&result.resulting_accounts, player.card).referrer, referrer.card.to_bytes(), "{len}");
+    }
+
+    let unlinked = player.card_at(Card::REFERRED_SIZE, 3, Some(Referral::unlinked()));
+    let result = with_stand_ins().process_instruction(&ix, &linking_accounts(&ix, old(Card::SIZE, CardStatus::Revealed), unlinked));
+    assert_eq!(result.raw_result, Ok(()));
+    assert_eq!(section_of(&result.resulting_accounts, player.card).referrer(), None, "a card in play is left alone, and nobody linked to it");
 }

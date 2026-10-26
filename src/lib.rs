@@ -147,10 +147,12 @@ impl ScratchCards {
         card: &mut Account<'a>,
         ephemeral_vault: &mut Account<'a>,
         magic_program: &Account<'a>,
+        analytics: &mut Account<'a>,
         args: close_card::CloseCard,
     ) -> Result<()> {
         Ok(args.process(
             admin.info.as_view(), house.info.as_view(), card.info.as_view(), ephemeral_vault.info.as_view(), magic_program.info.as_view(),
+            analytics.info.as_view(),
         )?)
     }
 
