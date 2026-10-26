@@ -124,15 +124,19 @@ impl ResolvePurchase {
 
         let amount = referral::cut(price);
         let house_seeds: &[&[u8]] = &[b"house", &[house_bump]];
-        let magic_context = || rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID).ok_or(ProgramError::NotEnoughAccountKeys);
+        let magic_context = rest.iter().find(|a| *a.address() == MAGIC_CONTEXT_ID);
         match (section.referrer(), self.referrer.0) {
-            (Some(account), _) if amount > 0 => referral::schedule_credit(
-                program_id, house, house_seeds, magic_context()?, magic_program,
-                card_account.address(), generation, &account, &ANALYTICS,
-                crate::ScratchCardsInstruction::CREDIT_REFERRAL, amount, false,
-            )?,
+            // A settle without the magic context — an older client's — still settles; it only
+            // cannot schedule the credit, so that stake earns its referrer nothing.
+            (Some(account), _) if amount > 0 => if let Some(magic_context) = magic_context {
+                referral::schedule_credit(
+                    program_id, house, house_seeds, magic_context, magic_program,
+                    card_account.address(), generation, &account, &ANALYTICS,
+                    crate::ScratchCardsInstruction::CREDIT_REFERRAL, amount, false,
+                )?
+            },
             (None, Some(code)) => referral::schedule_link(
-                program_id, house, house_seeds, magic_context()?, magic_program,
+                program_id, house, house_seeds, magic_context.ok_or(ProgramError::NotEnoughAccountKeys)?, magic_program,
                 &Pubkey::new_from_array(code), card_account.address(), generation,
                 crate::ScratchCardsInstruction::LINK_REFERRAL, amount,
             )?,

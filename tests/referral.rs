@@ -583,3 +583,14 @@ fn the_linking_credit_links_only_to_a_card_that_exists_then_credits_it() {
     assert_eq!(section_of(&result.resulting_accounts, player.card).referrer, referrer.card.to_bytes());
     assert_eq!(section_of(&result.resulting_accounts, referrer.card).earned, 0);
 }
+
+#[test]
+#[ignore = "needs cargo build-sbf"]
+fn a_linked_card_s_sale_without_the_magic_context_still_settles_and_credits_nothing() {
+    let player = Player::new();
+    let ix = resolve_purchase(&player, None, &[]);
+    let before = player.card_at(Card::REFERRED_SIZE, 2, Some(linked(Player::new().card, 9)));
+    let result = with_stand_ins().process_instruction(&ix, &sale_accounts(&ix, &player, before, true));
+    assert_eq!(result.raw_result, Ok(()));
+    assert!(magic_calls().is_empty(), "nothing scheduled");
+}
